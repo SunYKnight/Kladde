@@ -1694,7 +1694,7 @@ checksum = "e2db585e1d738fc771bf08a151420d3ed193d9d895a36df7f6f8a9456b911ddc"
 
 [[package]]
 name = "kladde"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
@@ -1714,7 +1714,7 @@ dependencies = [
 
 [[package]]
 name = "kladde-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "encoding_rs",
  "memchr",
@@ -1725,7 +1725,7 @@ dependencies = [
 
 [[package]]
 name = "kladde-editor"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
@@ -1737,7 +1737,7 @@ dependencies = [
 
 [[package]]
 name = "kladde-hex"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
@@ -1747,7 +1747,7 @@ dependencies = [
 
 [[package]]
 name = "kladde-panels"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
@@ -1759,11 +1759,11 @@ dependencies = [
 
 [[package]]
 name = "kladde-syntax"
-version = "0.1.0"
+version = "0.1.1"
 
 [[package]]
 name = "kladde-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64 0.22.1",
  "crc32fast",
@@ -1779,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "kladde-update"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1790,7 +1790,7 @@ dependencies = [
 
 [[package]]
 name = "kladde-workspace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs",
  "globset",
@@ -1801,7 +1801,7 @@ dependencies = [
 
 [[package]]
 name = "kladde-wstree"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "eframe",
  "egui",
