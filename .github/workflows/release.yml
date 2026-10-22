@@ -1,0 +1,152 @@
+name: Release
+
+# Pushing a tag v<version> publishes a GitHub release; running the workflow manually is a dry run
+# that builds everything and uploads the result as workflow artifacts without publishing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag and CHANGELOG against the workspace version
+        id: version
+        run: |
+          version=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version *= *"\([^"]*\)".*/\1/p' Cargo.toml)
+          if [ -z "$version" ]; then
+            echo "::error::No version in [workspace.package] of Cargo.toml"
+            exit 1
+          fi
+          heading=$(awk '/^## /{sub(/^## */, ""); print; exit}' CHANGELOG.md | tr -d '\r')
+
+          # A dry run may happen before the release is prepared, so mismatches only warn there.
+          level=error
+          if [ "$GITHUB_EVENT_NAME" != push ]; then level=warning; fi
+          failed=0
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match the workspace version v$version"
+            failed=1
+          fi
+          if [ "$heading" != "$version" ]; then
+            echo "::$level::Newest CHANGELOG.md heading is '## $heading', expected '## $version'"
+            if [ "$level" = error ]; then failed=1; fi
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          exit "$failed"
+
+  build:
+    needs: verify
+    strategy:
+      matrix:
+        include:
+          # ubuntu-22.04 keeps the glibc requirement of the Linux binary low.
+          - os: ubuntu-22.04
+            binary: target/release/kladde
+            asset: kladde-x86_64-linux
+          - os: windows-latest
+            binary: target/release/kladde.exe
+            asset: kladde-x86_64-windows.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain from rust-toolchain.toml
+        run: |
+          toolchain=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)
+          rustup toolchain install "$toolchain" --profile minimal
+
+      # No build cache: release binaries always come from a clean build.
+      - name: Build
+        run: cargo build --release --locked -p kladde
+
+      - name: Stage asset
+        run: |
+          mkdir dist
+          cp "${{ matrix.binary }}" "dist/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    needs: [verify, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          # Body of the newest "## " section; verify ensured it is "## $VERSION" for tag pushes.
+          awk '/^## /{n++; next} n==1' CHANGELOG.md | tr -d '\r' > notes.md
+          cat notes.md
+
+      - name: Write latest.json
+        run: |
+          base="https://github.com/$GITHUB_REPOSITORY/releases/download/v$VERSION"
+          linux_sha=$(sha256sum dist/kladde-x86_64-linux | cut -d ' ' -f 1)
+          windows_sha=$(sha256sum dist/kladde-x86_64-windows.exe | cut -d ' ' -f 1)
+          jq -n \
+            --arg version "$VERSION" \
+            --rawfile notes notes.md \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg base "$base" \
+            --arg linux_sha "$linux_sha" \
+            --arg windows_sha "$windows_sha" \
+            '{
+              version: $version,
+              notes: ($notes | sub("^\\s+"; "") | sub("\\s+$"; "")),
+              pub_date: $pub_date,
+              platforms: {
+                "linux-x86_64": { url: "\($base)/kladde-x86_64-linux", sha256: $linux_sha },
+                "windows-x86_64": { url: "\($base)/kladde-x86_64-windows.exe", sha256: $windows_sha }
+              }
+            }' > dist/latest.json
+          cat dist/latest.json
+
+      - name: Publish GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION" \
+            dist/kladde-x86_64-linux dist/kladde-x86_64-windows.exe dist/latest.json \
+            --title "Kladde $VERSION" \
+            --notes-file notes.md \
+            --verify-tag \
+            --latest
+
+      - name: Keep dry-run result
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-release
+          path: |
+            dist/latest.json
+            notes.md
