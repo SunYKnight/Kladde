@@ -5,11 +5,15 @@ Licence: [MIT](LICENSE).
 
 ## Install
 
-Download from the [latest release](https://github.com/SunYKnight/Kladde/releases/latest) and run it; there is no
-installer:
+Download from the [latest release](https://github.com/SunYKnight/Kladde/releases/latest). Both installers install
+for the current user without admin rights and add Kladde to the application menu:
 
-- Windows: `kladde-x86_64-windows.exe`
-- Linux (x86_64): `kladde-x86_64-linux`, made executable once with `chmod +x kladde-x86_64-linux`
+| | Installer | Standalone |
+|---|---|---|
+| Windows | `kladde-x86_64-windows-setup.exe`: `%LOCALAPPDATA%\Programs\Kladde`, Start menu, "Open with", uninstall in Settings > Apps | `kladde-x86_64-windows.exe`, run from anywhere |
+| Linux (x86_64) | `sh kladde-x86_64-linux-installer.sh`: `~/.local/bin/kladde`, icon and launcher; `--uninstall` removes them | `kladde-x86_64-linux`, made executable once with `chmod +x kladde-x86_64-linux` |
+
+Uninstalling keeps settings and workspaces. Installer sources: `packaging/`.
 
 Help > Check for updates downloads a newer release, replaces the program file and restarts Kladde. Settings > Updates
 can check at every start; it is off by default, and Kladde contacts no server otherwise. The program file's folder
@@ -51,8 +55,10 @@ kladde [FILE...]
 3. Commit, push to `master` and wait for CI.
 4. Tag and push: `git tag v0.2.0 && git push origin v0.2.0`.
 5. The _Release_ workflow (`.github/workflows/release.yml`) checks that tag, `Cargo.toml` and `CHANGELOG.md` agree,
-   builds `kladde-x86_64-linux` and `kladde-x86_64-windows.exe`, and publishes the GitHub release with
-   `latest.json` (version, notes, and per platform the download URL and SHA-256). Running copies find it through
+   builds the standalone binaries `kladde-x86_64-linux` and `kladde-x86_64-windows.exe`, the installers
+   `kladde-x86_64-linux-installer.sh` and `kladde-x86_64-windows-setup.exe` (Inno Setup), and publishes the GitHub
+   release with `latest.json` (version, notes, and per platform the download URL and SHA-256). Running copies find it
+   through
    `https://github.com/SunYKnight/Kladde/releases/latest/download/latest.json`.
 
 _Actions > Release > Run workflow_ is a dry run: it builds everything and uploads the binaries and `latest.json` as

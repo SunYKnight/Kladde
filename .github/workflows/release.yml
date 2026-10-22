@@ -75,15 +75,31 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p kladde
 
-      - name: Stage asset
+      - name: Stage standalone binary
         run: |
           mkdir dist
           cp "${{ matrix.binary }}" "dist/${{ matrix.asset }}"
 
+      - name: Build Linux installer
+        if: runner.os == 'Linux'
+        run: |
+          packaging/linux/build-installer.sh "${{ matrix.binary }}" "${{ needs.verify.outputs.version }}" \
+            dist/kladde-x86_64-linux-installer.sh
+
+      - name: Build Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup --no-progress -y }
+          & $iscc "/DVersion=${{ needs.verify.outputs.version }}" "/DExe=$PWD\${{ matrix.binary }}" `
+            "/DOutputDir=$PWD\dist" packaging\windows\kladde.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: dist/${{ matrix.asset }}
+          path: dist/*
           if-no-files-found: error
 
   publish:
@@ -136,7 +152,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "v$VERSION" \
-            dist/kladde-x86_64-linux dist/kladde-x86_64-windows.exe dist/latest.json \
+            dist/kladde-x86_64-linux dist/kladde-x86_64-linux-installer.sh \
+            dist/kladde-x86_64-windows.exe dist/kladde-x86_64-windows-setup.exe dist/latest.json \
             --title "Kladde $VERSION" \
             --notes-file notes.md \
             --verify-tag \

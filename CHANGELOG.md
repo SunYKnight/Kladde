@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.2
+
+### Added
+
+- Installers for Windows (`kladde-x86_64-windows-setup.exe`: Start menu, "Open with", uninstall entry) and Linux
+  (`kladde-x86_64-linux-installer.sh`: launcher and icon in the application menu, `--uninstall`). Both install for
+  the current user, so in-app updates keep working; the standalone binaries remain.
+
 ## 0.1.1
 
 ### Changed
