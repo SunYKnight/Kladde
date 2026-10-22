@@ -78,20 +78,25 @@ impl OutputState {
         self.active = self.runs.len() - 1;
     }
 
-    /// Adds a tab with fixed text, e.g. hashes or an error report.
+    /// Adds fixed text, e.g. hashes or an error report; appends to an existing message tab with the same title so
+    /// a log stays one tab.
     pub fn add_message(&mut self, title: &str, text: &str) {
-        let mut run = Run {
-            title: title.to_string(),
-            handle: None,
-            lines: VecDeque::new(),
-            dropped: 0,
-            exit: None,
-            quarto_doc: None,
-            quarto_output: None,
-        };
+        let existing = self.runs.iter().position(|r| r.handle.is_none() && r.title == title);
+        let index = existing.unwrap_or_else(|| {
+            self.runs.push(Run {
+                title: title.to_string(),
+                handle: None,
+                lines: VecDeque::new(),
+                dropped: 0,
+                exit: None,
+                quarto_doc: None,
+                quarto_output: None,
+            });
+            self.runs.len() - 1
+        });
+        let run = &mut self.runs[index];
         text.lines().for_each(|l| run.push(false, l.to_string()));
-        self.runs.push(run);
-        self.active = self.runs.len() - 1;
+        self.active = index;
     }
 
     /// Drains process output; call every frame.
