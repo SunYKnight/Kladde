@@ -24,5 +24,8 @@ egui = { workspace = true }
 eframe = { workspace = true }
 rfd = { workspace = true }
 
+[build-dependencies]
+embed-resource = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }

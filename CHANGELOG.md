@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- New application icon, also embedded in the Windows executable.
+
 ## 0.1.0
 
 First public release.
