@@ -130,7 +130,7 @@ impl App {
 
     pub fn open_find_in_files(&mut self) {
         self.open_find(false);
-        self.feat.find.scope = if self.active_ws.is_some() { FindScope::Workspace } else { FindScope::OpenFiles };
+        self.feat.find.scope = FindScope::Workspace;
     }
 
     pub fn find_step(&mut self, forward: bool) {
@@ -277,11 +277,8 @@ impl App {
                 self.find_in_files(files, "open files");
             }
             FindScope::Workspace => {
-                let files = self.active_workspace().map(|ws| ws.all_files(WORKSPACE_FILES_MAX));
-                match files {
-                    Some(files) => self.find_in_files(files, "workspace"),
-                    None => self.toast_info("Find in workspace: no workspace open; choose the scope \"Open files\""),
-                }
+                let files = self.ws.current().all_files(WORKSPACE_FILES_MAX);
+                self.find_in_files(files, "workspace");
             }
         }
     }

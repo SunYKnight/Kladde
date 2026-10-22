@@ -38,9 +38,8 @@ pub struct Settings {
     pub hex_group: u8,
     pub keybindings: BTreeMap<String, String>,
     pub recent_files: Vec<PathBuf>,
-    pub recent_workspaces: Vec<PathBuf>,
-    pub open_workspaces: Vec<PathBuf>,
-    pub active_workspace: Option<usize>,
+    /// Ask GitHub for a newer release at every start; off by default because Kladde otherwise stays offline.
+    pub check_updates_on_start: bool,
     pub window_size: Option<[f32; 2]>,
 }
 
@@ -62,9 +61,7 @@ impl Default for Settings {
             hex_group: 1,
             keybindings: BTreeMap::new(),
             recent_files: Vec::new(),
-            recent_workspaces: Vec::new(),
-            open_workspaces: Vec::new(),
-            active_workspace: None,
+            check_updates_on_start: false,
             window_size: None,
         }
     }
@@ -97,11 +94,6 @@ impl Settings {
     /// Newest first, de-duplicated, at most 20 entries.
     pub fn push_recent_file(&mut self, p: &Path) {
         push_recent(&mut self.recent_files, p);
-    }
-
-    /// Newest first, de-duplicated, at most 20 entries.
-    pub fn push_recent_workspace(&mut self, p: &Path) {
-        push_recent(&mut self.recent_workspaces, p);
     }
 }
 

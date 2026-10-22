@@ -7,18 +7,13 @@ use std::time::Instant;
 
 use kladde_core::{CoreError, Document, OpenMode, OpenOptions, Progress};
 use kladde_tools::GitStatus;
-use kladde_workspace::{Node, NodeKind, Session, SplitMode, TabState, Workspace};
+use kladde_workspace::{store_file, Node, NodeKind, Session, SplitMode, TabState, WorkspaceStore};
 
 use crate::app::Bg;
 use crate::docs::{apply_position, tab_position};
 use crate::state::{App, DocId};
 
-const SESSION_FILE: &str = "session.json";
 const BACKUP_DIR: &str = "backups";
-
-pub fn session_file(data_dir: &Path) -> PathBuf {
-    data_dir.join(SESSION_FILE)
-}
 
 /// Backup file of document `id`; `stamp` keeps names of different runs apart.
 pub fn backup_path(data_dir: &Path, stamp: u128, id: DocId) -> PathBuf {
@@ -82,36 +77,16 @@ fn git_statuses(dirs: &[PathBuf]) -> Result<HashMap<PathBuf, GitStatus>, String>
 }
 
 impl App {
-    /// Startup: open workspaces, restore the session, then open command-line files.
+    /// Startup: load all workspaces, restore the active one's tabs, then open command-line files.
     pub(crate) fn startup(&mut self, args: Vec<PathBuf>) {
-        let paths = self.settings.open_workspaces.clone();
-        paths.iter().for_each(|p| match Workspace::load(p) {
-            Ok(ws) => self.workspaces.push(ws),
-            Err(e) => self.toast_error(format!("Cannot open workspace {}: {e}", p.display())),
-        });
-        self.active_ws = self
-            .settings
-            .active_workspace
-            .filter(|i| *i < paths.len())
-            .and_then(|i| self.workspaces.iter().position(|w| w.file_path().is_some_and(|f| f == paths[i])));
-        let session = match self.active_ws {
-            Some(i) => self.workspaces[i].session.clone(),
-            None => self.load_app_session(),
-        };
+        self.load_store();
+        let session = self.ws.current().session.clone();
         self.restore_session(session);
-        args.iter().for_each(|p| self.open_any(p));
+        args.iter().for_each(|p| {
+            self.open_path(p, crate::docs::auto_open(), None);
+        });
         self.ensure_tab();
         self.refresh_git();
-    }
-
-    /// Opens a dropped or command-line path: workspaces by extension, everything else as a document.
-    pub(crate) fn open_any(&mut self, path: &Path) {
-        let workspace = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("kladde"));
-        if workspace {
-            self.open_workspace(path);
-        } else {
-            self.open_path(path, crate::docs::auto_open(), None);
-        }
     }
 
     pub(crate) fn ensure_tab(&mut self) {
@@ -121,14 +96,37 @@ impl App {
         }
     }
 
-    fn load_app_session(&mut self) -> Session {
-        let path = session_file(&self.data_dir);
-        match path.exists() {
-            true => Session::load(&path).unwrap_or_else(|e| {
-                self.toast_error(format!("Cannot read the session {}: {e}", path.display()));
-                Session::default()
-            }),
-            false => Session::default(),
+    /// Portable mode stores workspace paths relative to the data directory so the drive letter may change.
+    fn store_base(&self) -> Option<PathBuf> {
+        kladde_workspace::is_portable().then(|| self.data_dir.clone())
+    }
+
+    /// Reads the workspace file; an unreadable one is moved aside so saving cannot overwrite it.
+    fn load_store(&mut self) {
+        let path = store_file(&self.data_dir);
+        match WorkspaceStore::load(&path, self.store_base().as_deref()) {
+            Ok(store) => self.ws = store,
+            Err(e) => {
+                let aside = path.with_extension(format!("json.unreadable-{}", self.shell.run_stamp));
+                let moved = std::fs::rename(&path, &aside);
+                let kept = match moved {
+                    Ok(()) => format!("it was kept as {}", aside.display()),
+                    Err(m) => format!("moving it aside failed too: {m}"),
+                };
+                self.toast_error(format!("Cannot read the workspaces {}: {e}; {kept}", path.display()));
+            }
+        }
+    }
+
+    /// Writes the workspace file if anything in it changed.
+    pub(crate) fn save_store(&mut self) -> Result<(), String> {
+        if self.ws.is_dirty() {
+            let (path, base) = (store_file(&self.data_dir), self.store_base());
+            self.ws
+                .save(&path, base.as_deref())
+                .map_err(|e| format!("Cannot save the workspaces {}: {e}", path.display()))
+        } else {
+            Ok(())
         }
     }
 
@@ -282,8 +280,8 @@ impl App {
         self.focused_pane = 0;
     }
 
-    /// Stores the current tabs into the active workspace (or the app session) and loads those of `target`.
-    fn switch_to(&mut self, target: Option<usize>) -> bool {
+    /// Stores the current tabs into the active workspace and loads those of workspace `target`.
+    fn switch_to(&mut self, target: usize) -> bool {
         let large = self.large_dirty_docs();
         let blocked = if self.saves_running() || self.shell.backup_jobs > 0 {
             Some("Wait until saves and backups have finished".to_string())
@@ -300,15 +298,19 @@ impl App {
         match stored {
             Ok(()) => {
                 self.drop_all_docs();
-                self.active_ws = target;
-                let session = match target {
-                    Some(i) => self.workspaces[i].session.clone(),
-                    None => self.load_app_session(),
-                };
+                self.ws.active = target;
+                let ws = self.ws.current_mut();
+                ws.set_folded(false);
+                // The file records which workspace is active, so it must be written.
+                ws.mark_dirty();
+                let session = ws.session.clone();
                 self.restore_session(session);
                 self.ensure_tab();
                 self.shell.git.clear();
                 self.refresh_git();
+                if let Err(e) = self.save_store() {
+                    self.toast_error(e);
+                }
                 true
             }
             Err(e) => {
@@ -318,119 +320,87 @@ impl App {
         }
     }
 
-    /// Saves the current tabs where they belong: the active workspace file or `session.json`.
+    /// Puts the current tabs into the active workspace and writes the workspace file.
     fn store_tabs(&mut self) -> Result<(), String> {
         let session = self.capture_session()?;
-        match self.active_ws {
-            Some(i) => {
-                let ws = &mut self.workspaces[i];
-                if ws.session != session {
-                    ws.session = session;
-                    ws.mark_dirty();
-                }
-                match ws.file_path().is_some() && ws.is_dirty() {
-                    true => ws.save().map_err(|e| format!("Cannot save workspace {}: {e}", ws.name)),
-                    false => Ok(()),
-                }
-            }
-            None => {
-                let path = session_file(&self.data_dir);
-                session.save(&path).map_err(|e| format!("Cannot save the session {}: {e}", path.display()))
-            }
+        self.set_current_session(session);
+        self.save_store()
+    }
+
+    fn set_current_session(&mut self, session: Session) {
+        let ws = self.ws.current_mut();
+        if ws.session != session {
+            ws.session = session;
+            ws.mark_dirty();
         }
     }
 
-    pub fn active_workspace(&mut self) -> Option<&mut Workspace> {
-        self.active_ws.and_then(|i| self.workspaces.get_mut(i))
-    }
-
-    pub fn new_workspace(&mut self) {
-        let picked = rfd::FileDialog::new()
-            .set_title("New workspace")
-            .add_filter("Kladde workspace", &["kladde"])
-            .set_file_name("workspace.kladde")
-            .save_file();
-        if let Some(path) = picked {
-            let path = if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("kladde")) {
-                path
-            } else {
-                path.with_extension("kladde")
-            };
-            let name = path.file_stem().map_or("Workspace".into(), |s| s.to_string_lossy().into_owned());
-            let mut ws = Workspace::new(&name);
-            match ws.save_as(&path) {
-                Ok(()) => {
-                    self.workspaces.push(ws);
-                    self.settings.push_recent_workspace(&path);
-                    self.switch_to(Some(self.workspaces.len() - 1));
-                }
-                Err(e) => self.toast_error(format!("Cannot create workspace {}: {e}", path.display())),
-            }
+    /// Adds a workspace named `name` (made unique) and switches to it.
+    pub fn new_workspace(&mut self, name: &str) {
+        let i = self.ws.add(name);
+        if !self.switch_to(i) {
+            self.toast_info(format!(
+                "Workspace {} was created; switch to it once the hint above is resolved",
+                self.ws.workspaces[i].name
+            ));
         }
     }
 
-    pub fn open_workspace(&mut self, path: &Path) {
-        // An unresolvable path is used as given; loading then reports the error.
-        let path = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-        let open = self.workspaces.iter().position(|w| w.file_path().is_some_and(|f| crate::docs::same_path(f, &path)));
-        match open {
-            Some(i) => self.switch_workspace(i),
-            None => match Workspace::load(&path) {
-                Ok(ws) => {
-                    self.workspaces.push(ws);
-                    self.settings.push_recent_workspace(&path);
-                    let i = self.workspaces.len() - 1;
-                    if !self.switch_to(Some(i)) {
-                        self.toast_info(format!("Workspace {} opened in the background", self.workspaces[i].name));
+    pub fn rename_workspace(&mut self, i: usize, name: &str) {
+        match self.ws.rename(i, name) {
+            Ok(()) => {
+                if let Err(e) = self.save_store() {
+                    self.toast_error(e);
+                }
+            }
+            Err(e) => self.toast_error(format!("Cannot rename the workspace: {e}")),
+        }
+    }
+
+    /// Removes workspace `i` with its tree and tab list; files on disk stay. The last workspace cannot go.
+    pub fn delete_workspace(&mut self, i: usize) {
+        let len = self.ws.workspaces.len();
+        let ready = match (i < len, len > 1, i == self.ws.active) {
+            (false, _, _) => false,
+            (true, false, _) => {
+                self.toast_info("The last workspace cannot be deleted");
+                false
+            }
+            (true, true, true) => self.switch_to(if i == 0 { 1 } else { i - 1 }),
+            (true, true, false) => true,
+        };
+        if ready {
+            match self.ws.remove(i) {
+                Ok(removed) => {
+                    removed.session.tabs.iter().for_each(|t| self.delete_backup(t.backup.as_deref()));
+                    if let Err(e) = self.save_store() {
+                        self.toast_error(e);
                     }
+                    self.toast_info(format!("Workspace {} deleted", removed.name));
                 }
-                Err(e) => self.toast_error(format!("Cannot open workspace {}: {e}", path.display())),
-            },
-        }
-    }
-
-    pub fn save_workspace(&mut self) {
-        match self.active_ws {
-            Some(i) => {
-                let session = self.capture_session();
-                let ws = &mut self.workspaces[i];
-                if let Ok(session) = &session {
-                    ws.session = session.clone();
-                }
-                let saved = match ws.file_path().is_some() {
-                    true => ws.save().map(|()| None),
-                    false => match rfd::FileDialog::new().add_filter("Kladde workspace", &["kladde"]).save_file() {
-                        Some(path) => ws.save_as(&path).map(|()| Some(path)),
-                        None => Ok(None),
-                    },
-                };
-                let name = ws.name.clone();
-                match (session, saved) {
-                    (Err(e), _) => self.toast_error(e),
-                    (Ok(_), Ok(new_path)) => {
-                        if let Some(p) = new_path {
-                            self.settings.push_recent_workspace(&p);
-                        }
-                        self.toast_info(format!("Workspace {name} saved"));
-                    }
-                    (Ok(_), Err(e)) => self.toast_error(format!("Cannot save workspace {name}: {e}")),
-                }
-            }
-            None => self.toast_info("No workspace is open"),
-        }
-    }
-
-    pub fn close_workspace(&mut self) {
-        if let Some(i) = self.active_ws {
-            if self.switch_to(None) {
-                self.workspaces.remove(i);
+                Err(e) => self.toast_error(format!("Cannot delete the workspace: {e}")),
             }
         }
     }
 
     pub fn switch_workspace(&mut self, i: usize) {
-        if i < self.workspaces.len() && self.active_ws != Some(i) {
-            self.switch_to(Some(i));
+        if i < self.ws.workspaces.len() && self.ws.active != i {
+            self.switch_to(i);
+        }
+    }
+
+    /// Switches to workspace `i` and activates its stored tab `tab` (index into its session's tab list).
+    pub fn switch_workspace_to_tab(&mut self, i: usize, tab: usize) {
+        let wanted = self.ws.workspaces.get(i).and_then(|w| w.session.tabs.get(tab)).map(|t| t.pane);
+        let before = self
+            .ws
+            .workspaces
+            .get(i)
+            .map_or(0, |w| w.session.tabs.iter().take(tab).filter(|t| Some(t.pane) == wanted).count());
+        if self.ws.active != i && self.switch_to(i) {
+            if let Some(pane) = wanted.map(|p| usize::from(p.min(1))) {
+                self.focus_tab(pane, before.min(self.panes[pane].tabs.len().saturating_sub(1)));
+            }
         }
     }
 
@@ -462,6 +432,7 @@ impl App {
         if errors.is_empty() || self.shell.quit_ignore_errors {
             self.shell.allow_close = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.relaunch_after_update();
         } else {
             self.shell.quit_pending = false;
             self.shell.quit_ignore_errors = true;
@@ -470,27 +441,16 @@ impl App {
         }
     }
 
-    /// Session, settings and modified workspaces; returns the errors.
+    /// Session, settings and workspaces; returns the errors.
     fn persist_all(&mut self, ctx: &egui::Context) -> Vec<String> {
         let mut errors: Vec<String> = Vec::new();
         if let Err(e) = self.store_tabs() {
             errors.push(e);
         }
         self.settings.window_size = ctx.input(|i| i.viewport().inner_rect).map(|r| [r.width(), r.height()]);
-        self.settings.open_workspaces =
-            self.workspaces.iter().filter_map(|w| w.file_path().map(Path::to_path_buf)).collect();
-        self.settings.active_workspace = self
-            .active_ws
-            .and_then(|i| self.workspaces[i].file_path())
-            .and_then(|f| self.settings.open_workspaces.iter().position(|p| p == f));
         if let Err(e) = self.settings.save(&self.data_dir) {
             errors.push(format!("Cannot save settings: {e}"));
         }
-        self.workspaces.iter_mut().filter(|w| w.is_dirty() && w.file_path().is_some()).for_each(|w| {
-            if let Err(e) = w.save() {
-                errors.push(format!("Cannot save workspace {}: {e}", w.name));
-            }
-        });
         errors
     }
 
@@ -526,11 +486,11 @@ impl App {
                     ctx.request_repaint();
                 });
             });
-            if self.active_ws.is_none() {
-                let path = session_file(&self.data_dir);
-                if let Err(e) = self.session_snapshot().save(&path) {
-                    self.toast_error(format!("Cannot save the session {}: {e}", path.display()));
-                }
+            // Keeps tabs and tree edits safe from a crash without waiting for quit.
+            let session = self.session_snapshot();
+            self.set_current_session(session);
+            if let Err(e) = self.save_store() {
+                self.toast_error(e);
             }
         }
     }
@@ -549,15 +509,13 @@ impl App {
 
     /// X9: git status of the active workspace's folders on a worker thread.
     pub(crate) fn refresh_git(&mut self) {
-        let dirs = match (self.shell.git_available, self.active_ws) {
-            (true, Some(i)) => {
-                let ws = &self.workspaces[i];
-                let mut dirs: Vec<PathBuf> =
-                    ws.file_path().and_then(Path::parent).map(Path::to_path_buf).into_iter().collect();
-                collect_dirs(&ws.root, &mut dirs);
+        let dirs = match self.shell.git_available {
+            true => {
+                let mut dirs = Vec::new();
+                collect_dirs(&self.ws.current().root, &mut dirs);
                 dirs
             }
-            _ => Vec::new(),
+            false => Vec::new(),
         };
         if !dirs.is_empty() {
             self.shell.git_generation += 1;
@@ -616,11 +574,14 @@ mod tests {
         doc.insert(0, "unsaved ä\r\nline".as_bytes()).expect("insert");
         let backup = backup_path(dir.path(), 7, 3);
         write_backup(&doc, &backup).expect("backup");
+        let mut store = WorkspaceStore::default();
         let tab = TabState { backup: Some(backup), title: "new 3".into(), ..TabState::default() };
-        let session = Session { tabs: vec![tab], ..Session::default() };
-        session.save(&session_file(dir.path())).expect("save session");
+        store.current_mut().session = Session { tabs: vec![tab], ..Session::default() };
+        store.current_mut().mark_dirty();
+        store.save(&store_file(dir.path()), None).expect("save workspaces");
 
-        let loaded = Session::load(&session_file(dir.path())).expect("load session");
+        let loaded = WorkspaceStore::load(&store_file(dir.path()), None).expect("load workspaces");
+        let loaded = &loaded.current().session;
         let bytes = std::fs::read(loaded.tabs[0].backup.as_ref().expect("backup path")).expect("read backup");
         let restored = Document::from_bytes(bytes);
         assert_eq!(content(&restored), content(&doc));

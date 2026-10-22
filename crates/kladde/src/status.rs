@@ -41,9 +41,7 @@ impl App {
                     if kladde_workspace::is_portable() {
                         ui.weak("portable");
                     }
-                    if let Some(ws) = self.active_ws.map(|i| &self.workspaces[i]) {
-                        ui.weak(format!("Workspace: {}", ws.name));
-                    }
+                    ui.weak(format!("Workspace: {}", self.ws.current().name));
                     if self.jobs_running() {
                         ui.spinner().on_hover_text("Background work is running");
                     }

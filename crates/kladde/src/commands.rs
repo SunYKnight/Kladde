@@ -22,6 +22,7 @@ use crate::macros::MacroState;
 use crate::run::{PendingCode, PendingSave};
 use crate::state::{App, DocEntry, DocId, TabView};
 use crate::tools::{Confirm, CsvCache, DiffWindow, GotoState, HashPanel, Transform};
+use crate::wsbar::WsPrompt;
 
 pub const QUARTO_MISSING: &str = "Quarto not found on PATH";
 pub const HISTORY_MISSING: &str = "File history unavailable (git not installed or history disabled)";
@@ -92,9 +93,8 @@ pub enum Cmd {
     PaletteCommands,
     PaletteFiles,
     WsNew,
-    WsOpen,
-    WsSave,
-    WsClose,
+    WsRename,
+    WsDelete,
     WsSwitch,
     WsAddFile,
     RunFence,
@@ -114,6 +114,7 @@ pub enum Cmd {
     Settings,
     MacroRecord,
     MacroPlay,
+    CheckUpdates,
     Quit,
 }
 
@@ -171,9 +172,8 @@ pub fn classify(id: &str) -> Option<Cmd> {
         "palette.commands" => Some(Cmd::PaletteCommands),
         "palette.files" => Some(Cmd::PaletteFiles),
         "workspace.new" => Some(Cmd::WsNew),
-        "workspace.open" => Some(Cmd::WsOpen),
-        "workspace.save" => Some(Cmd::WsSave),
-        "workspace.close" => Some(Cmd::WsClose),
+        "workspace.rename" => Some(Cmd::WsRename),
+        "workspace.delete" => Some(Cmd::WsDelete),
         "workspace.switch" => Some(Cmd::WsSwitch),
         "workspace.add_current_file" => Some(Cmd::WsAddFile),
         "run.fence_at_caret" => Some(Cmd::RunFence),
@@ -204,6 +204,7 @@ pub fn classify(id: &str) -> Option<Cmd> {
         "settings.open" => Some(Cmd::Settings),
         "macro.record" => Some(Cmd::MacroRecord),
         "macro.play" => Some(Cmd::MacroPlay),
+        "help.check_updates" => Some(Cmd::CheckUpdates),
         "app.quit" => Some(Cmd::Quit),
         _ => None,
     };
@@ -397,12 +398,9 @@ impl App {
                 Interpreter::from_extension(&ext).is_none().then(|| format!("No interpreter runs .{ext} files"))
             }),
             Cmd::Encoding(_) | Cmd::Eol(_) if binary => Some("Binary documents are saved byte for byte".to_string()),
-            Cmd::WsSave | Cmd::WsClose | Cmd::WsAddFile if self.active_ws.is_none() => {
-                Some("No workspace open".to_string())
-            }
-            Cmd::WsSwitch if self.workspaces.is_empty() && self.settings.recent_workspaces.is_empty() => {
-                Some("No open or recent workspaces".to_string())
-            }
+            Cmd::WsDelete if self.ws.workspaces.len() < 2 => Some("The last workspace cannot be deleted".to_string()),
+            Cmd::WsSwitch if self.ws.workspaces.len() < 2 => Some("There is only one workspace".to_string()),
+            Cmd::CheckUpdates if self.update_busy() => Some("An update check or download is running".to_string()),
             Cmd::DiffFiles if self.docs.len() < 2 => Some("Open two documents to compare".to_string()),
             Cmd::Unsplit if self.split == SplitMode::None => Some("The view is not split".to_string()),
             Cmd::MacroPlay if self.feat.macros.recording => Some("Stop recording first".to_string()),
@@ -512,10 +510,9 @@ impl App {
             Cmd::DiffFiles => self.open_palette(PaletteKind::DiffFirst),
             Cmd::PaletteCommands => self.open_palette(PaletteKind::Commands),
             Cmd::PaletteFiles => self.open_palette(PaletteKind::Files),
-            Cmd::WsNew => self.new_workspace(),
-            Cmd::WsOpen => self.pick_workspace(),
-            Cmd::WsSave => self.save_workspace(),
-            Cmd::WsClose => self.close_workspace(),
+            Cmd::WsNew => self.shell.ws_prompt = Some(WsPrompt::create()),
+            Cmd::WsRename => self.shell.ws_prompt = Some(WsPrompt::rename(self.ws.active, &self.ws.current().name)),
+            Cmd::WsDelete => self.shell.ws_prompt = Some(WsPrompt::Delete(self.ws.active)),
             Cmd::WsSwitch => self.open_palette(PaletteKind::Workspaces),
             Cmd::WsAddFile => self.add_current_file_to_workspace(),
             Cmd::RunFence => self.run_fence_at_caret(false),
@@ -539,6 +536,7 @@ impl App {
             Cmd::Settings => self.feat.settings_open = true,
             Cmd::MacroRecord => self.toggle_macro_recording(),
             Cmd::MacroPlay => self.play_macro(),
+            Cmd::CheckUpdates => self.check_for_updates(true),
             Cmd::Quit => self.request_quit(ctx),
         }
     }
@@ -552,25 +550,17 @@ impl App {
         });
     }
 
-    fn pick_workspace(&mut self) {
-        let picked = rfd::FileDialog::new().add_filter("Kladde workspace", &["kladde"]).pick_file();
-        if let Some(path) = picked {
-            self.open_workspace(&path);
-        }
-    }
-
     fn add_current_file_to_workspace(&mut self) {
         let path = self.focused_doc().and_then(|id| self.doc_path(id));
-        let added = path.clone().and_then(|p| {
-            self.active_workspace().map(|ws| {
-                let root = ws.root.id;
-                ws.add_file(root, &p)
-            })
+        let added = path.clone().map(|p| {
+            let ws = self.ws.current_mut();
+            let root = ws.root.id;
+            ws.add_file(root, &p)
         });
         match (added, path) {
             (Some(Ok(_)), Some(p)) => self.toast_info(format!("Added {} to the workspace", file_name(&p))),
             (Some(Err(e)), _) => self.toast_error(format!("Could not add file: {e}")),
-            _ => self.toast_info("No workspace open"),
+            _ => {}
         }
     }
 
@@ -728,7 +718,7 @@ impl App {
                     detail: "open · untitled".to_string(),
                 }),
             });
-            let ws_files = self.active_workspace().map(|ws| ws.all_files(PALETTE_FILES_MAX)).unwrap_or_default();
+            let ws_files = self.ws.current().all_files(PALETTE_FILES_MAX);
             ws_files
                 .iter()
                 .filter(|p| seen.insert(p.to_path_buf()))
@@ -743,19 +733,20 @@ impl App {
     }
 
     fn workspace_items(&self) -> Vec<PaletteItem> {
-        let open = self.workspaces.iter().enumerate().map(|(i, ws)| PaletteItem {
-            id: format!("ws:{i}"),
-            label: ws.name.clone(),
-            detail: if Some(i) == self.active_ws { "active".to_string() } else { "open".to_string() },
-        });
-        let open_paths: HashSet<PathBuf> =
-            self.workspaces.iter().filter_map(|ws| ws.file_path().map(Path::to_path_buf)).collect();
-        let recent = self.settings.recent_workspaces.iter().filter(|p| !open_paths.contains(*p)).map(|p| PaletteItem {
-            id: format!("path:{}", p.display()),
-            label: file_name(p),
-            detail: format!("recent · {}", parent_text(p)),
-        });
-        open.chain(recent).collect()
+        self.ws
+            .workspaces
+            .iter()
+            .enumerate()
+            .map(|(i, ws)| PaletteItem {
+                id: format!("ws:{i}"),
+                label: ws.name.clone(),
+                detail: match (i == self.ws.active, ws.session.tabs.len()) {
+                    (true, _) => "active".to_string(),
+                    (false, 1) => "1 tab".to_string(),
+                    (false, n) => format!("{n} tabs"),
+                },
+            })
+            .collect()
     }
 
     fn doc_items(&self, except: Option<DocId>) -> Vec<PaletteItem> {
@@ -782,11 +773,9 @@ impl App {
                     _ => {}
                 }
             }
-            PaletteKind::Workspaces => match (id.strip_prefix("ws:"), id.strip_prefix("path:")) {
-                (Some(i), _) => i.parse().into_iter().for_each(|i| self.switch_workspace(i)),
-                (_, Some(path)) => self.open_workspace(Path::new(path)),
-                _ => {}
-            },
+            PaletteKind::Workspaces => {
+                id.strip_prefix("ws:").and_then(|i| i.parse().ok()).into_iter().for_each(|i| self.switch_workspace(i))
+            }
             PaletteKind::Interpreter => {
                 let interp = Interpreter::all().iter().copied().find(|i| i.label() == id);
                 if let (Some(interp), Some(code)) = (interp, self.feat.pending_code.take()) {
@@ -828,7 +817,10 @@ impl App {
     /// Commands whose chords were pressed. F2/Delete stay with the focused workspace tree, and a focused text
     /// field other than the editor keeps the keys of edit commands (its own undo and clipboard).
     fn triggered_commands(&mut self, ctx: &egui::Context) -> Vec<&'static str> {
-        let modal = self.feat.palette.is_open() || self.feat.goto.is_some() || self.feat.confirm.is_some();
+        let modal = self.feat.palette.is_open()
+            || self.feat.goto.is_some()
+            || self.feat.confirm.is_some()
+            || self.shell.ws_prompt.is_some();
         if modal || settings_capturing(ctx) {
             Vec::new()
         } else {

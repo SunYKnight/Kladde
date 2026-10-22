@@ -67,6 +67,10 @@ pub struct ShellState {
     pub(crate) backup_jobs: usize,
     pub(crate) history_opening: bool,
     pub(crate) history_missing: bool,
+    pub(crate) ws_prompt: Option<crate::wsbar::WsPrompt>,
+    pub(crate) update: crate::update::UpdateState,
+    /// Executable to start once the quit after an update has finished.
+    pub(crate) relaunch: Option<PathBuf>,
 }
 
 impl ShellState {
@@ -107,6 +111,9 @@ impl ShellState {
             backup_jobs: 0,
             history_opening: false,
             history_missing: false,
+            ws_prompt: None,
+            update: crate::update::UpdateState::Idle,
+            relaunch: None,
         }
     }
 }
@@ -128,8 +135,7 @@ impl App {
             data_dir,
             settings,
             keymap,
-            workspaces: Vec::new(),
-            active_ws: None,
+            ws: kladde_workspace::WorkspaceStore::default(),
             docs: HashMap::new(),
             next_doc_id: 0,
             untitled_counter: 0,
@@ -146,6 +152,7 @@ impl App {
         settings_error.into_iter().chain(keymap_errors).for_each(|e| app.toast_error(e));
         app.apply_theme(&cc.egui_ctx);
         app.startup(args);
+        app.start_updates();
         app
     }
 
@@ -192,7 +199,9 @@ impl App {
 
     fn handle_dropped(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
-        dropped.iter().for_each(|p| self.open_any(p));
+        dropped.iter().for_each(|p| {
+            self.open_path(p, crate::docs::auto_open(), None);
+        });
     }
 
     fn background_busy(&self) -> bool {
@@ -256,6 +265,7 @@ impl eframe::App for App {
         self.poll_saves();
         self.poll_documents();
         self.poll_backups();
+        self.poll_update();
         self.handle_dropped(ctx);
         if let Some(tab) = self.feat.show_bottom.take() {
             self.shell.bottom_visible = true;
@@ -264,11 +274,14 @@ impl eframe::App for App {
         egui::TopBottomPanel::top("kladde_menu").show(ctx, |ui| {
             egui::menu::bar(ui, |ui| self.show_menu_bar(ui));
         });
+        self.show_workspace_strip(ctx);
         self.show_side_panel(ctx);
         self.show_status_bar(ctx);
         self.show_bottom_panel(ctx);
         self.show_central(ctx);
         self.show_modals(ctx);
+        self.show_ws_prompt(ctx);
+        self.show_update_dialog(ctx);
         self.show_close_prompt(ctx);
         self.macro_record_events(ctx);
         self.show_toasts(ctx);

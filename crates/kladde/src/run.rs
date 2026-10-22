@@ -57,15 +57,10 @@ fn fence_at(text: &str, caret: usize) -> Option<(String, String)> {
 }
 
 impl App {
-    /// Working directory for runs: the document's folder, else the workspace folder, else the temp dir.
+    /// Working directory for runs: the document's folder, else the temp dir.
     fn run_dir(&self, doc: Option<DocId>) -> PathBuf {
         let doc_dir = doc.and_then(|id| self.doc_path(id)).and_then(|p| p.parent().map(Path::to_path_buf));
-        let ws_dir = self
-            .active_ws
-            .and_then(|i| self.workspaces.get(i))
-            .and_then(|ws| ws.file_path())
-            .and_then(|p| p.parent().map(Path::to_path_buf));
-        doc_dir.or(ws_dir).unwrap_or_else(std::env::temp_dir)
+        doc_dir.unwrap_or_else(std::env::temp_dir)
     }
 
     pub fn start_run(&mut self, interp: Interpreter, code: &str, cwd: &Path, in_terminal: bool) {

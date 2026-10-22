@@ -106,6 +106,12 @@ fn backups_section(ui: &mut egui::Ui, s: &mut Settings) -> bool {
     changed
 }
 
+fn updates_section(ui: &mut egui::Ui, s: &mut Settings) -> bool {
+    let r = ui.checkbox(&mut s.check_updates_on_start, "Check for updates on start");
+    ui.weak("Asks GitHub for a newer release; Kladde contacts no server otherwise. Help > Check for updates asks now.");
+    r.changed()
+}
+
 fn hex_section(ui: &mut egui::Ui, s: &mut Settings) -> bool {
     let mut changed = false;
     egui::Grid::new("kladde_settings_hex").num_columns(2).show(ui, |ui| {
@@ -222,6 +228,7 @@ pub fn show_settings(ctx: &egui::Context, open: &mut bool, settings: &mut Settin
         changed |= section(ui, "Backups & history", settings, backups_section);
         changed |= section(ui, "Hex", settings, hex_section);
         changed |= section(ui, "Appearance", settings, appearance_section);
+        changed |= section(ui, "Updates", settings, updates_section);
         changed |= section(ui, "Key bindings", settings, bindings_section);
     });
     if !*open {

@@ -12,7 +12,6 @@ use crate::state::{App, DocId};
 enum MenuAction {
     Command(&'static str),
     OpenFile(PathBuf),
-    OpenWorkspace(PathBuf),
     Reopen(DocId, TextEncoding),
 }
 
@@ -48,7 +47,7 @@ impl App {
             .for_each(|c| self.command_item(ui, c.id, chosen));
     }
 
-    fn recent_menus(&self, ui: &mut egui::Ui, chosen: &mut Option<MenuAction>) {
+    fn recent_menu(&self, ui: &mut egui::Ui, chosen: &mut Option<MenuAction>) {
         let files = &self.settings.recent_files;
         ui.add_enabled_ui(!files.is_empty(), |ui| {
             ui.menu_button("Recent files", |ui| {
@@ -61,19 +60,6 @@ impl App {
             })
             .response
             .on_disabled_hover_text("No recent files");
-        });
-        let workspaces = &self.settings.recent_workspaces;
-        ui.add_enabled_ui(!workspaces.is_empty(), |ui| {
-            ui.menu_button("Recent workspaces", |ui| {
-                workspaces.iter().for_each(|p| {
-                    if ui.button(file_label(p)).on_hover_text(p.display().to_string()).clicked() {
-                        *chosen = Some(MenuAction::OpenWorkspace(p.clone()));
-                        ui.close_menu();
-                    }
-                });
-            })
-            .response
-            .on_disabled_hover_text("No recent workspaces");
         });
     }
 
@@ -107,7 +93,7 @@ impl App {
         let c = &mut chosen;
         ui.menu_button("File", |ui| {
             self.category_items(ui, "File", &[], c);
-            self.recent_menus(ui, c);
+            self.recent_menu(ui, c);
             ui.separator();
             self.category_items(ui, "App", &[], c);
         });
@@ -143,13 +129,17 @@ impl App {
             ui.separator();
             self.category_items(ui, "Settings", &[], c);
         });
+        ui.menu_button("Help", |ui| {
+            self.category_items(ui, "Help", &[], c);
+            ui.separator();
+            ui.weak(format!("Kladde {}", env!("CARGO_PKG_VERSION")));
+        });
         let ctx = ui.ctx().clone();
         match chosen {
             Some(MenuAction::Command(id)) => self.execute(&ctx, id),
             Some(MenuAction::OpenFile(path)) => {
                 self.open_path(&path, crate::docs::auto_open(), None);
             }
-            Some(MenuAction::OpenWorkspace(path)) => self.open_workspace(&path),
             Some(MenuAction::Reopen(id, enc)) => self.reopen_with(id, enc),
             None => {}
         }

@@ -76,9 +76,8 @@ const FIXED_HEAD: &[CommandSpec] = &[
     cmd("palette.commands", "Command palette", "Palette", Some("Ctrl+Shift+P")),
     cmd("palette.files", "Go to file", "Palette", Some("Ctrl+P")),
     cmd("workspace.new", "New workspace…", "Workspace", None),
-    cmd("workspace.open", "Open workspace…", "Workspace", None),
-    cmd("workspace.save", "Save workspace", "Workspace", None),
-    cmd("workspace.close", "Close workspace", "Workspace", None),
+    cmd("workspace.rename", "Rename workspace…", "Workspace", None),
+    cmd("workspace.delete", "Delete workspace…", "Workspace", None),
     cmd("workspace.switch", "Switch workspace…", "Workspace", Some("Ctrl+Alt+W")),
     cmd("workspace.add_current_file", "Add current file to workspace", "Workspace", None),
     cmd("run.fence_at_caret", "Run code block at caret", "Run", Some("Ctrl+Enter")),
@@ -112,6 +111,7 @@ const FIXED_TAIL: &[CommandSpec] = &[
     cmd("settings.open", "Settings…", "Settings", Some("Ctrl+Comma")),
     cmd("macro.record", "Start/stop macro recording", "Macro", Some("Ctrl+Shift+R")),
     cmd("macro.play", "Play macro", "Macro", Some("Ctrl+Shift+M")),
+    cmd("help.check_updates", "Check for updates…", "Help", None),
     cmd("app.quit", "Exit", "App", Some("Alt+F4")),
 ];
 

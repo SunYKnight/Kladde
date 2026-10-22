@@ -4,12 +4,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ensure, WsError};
-use crate::fsops::{rename_path_on_disk, write_atomic, Filter};
+use crate::fsops::{rename_path_on_disk, Filter};
 use crate::paths::{absolute, from_stored, normalize, same_path, strip_base, to_stored};
 use crate::session::Session;
 
-/// Format version written to workspace files; bump when the layout changes incompatibly.
-const FILE_VERSION: u32 = 1;
 const ROOT_ID: NodeId = 0;
 
 pub type NodeId = u64;
@@ -130,11 +128,12 @@ fn validate(node: &Node, ids: &mut HashSet<NodeId>) -> Result<(), WsError> {
     node.children.iter().try_for_each(|c| validate(c, ids))
 }
 
-/// On-disk layout; field order here is the field order in the file.
+/// One workspace as stored in the global workspace file; field order here is the field order in the file.
 #[derive(Serialize, Deserialize)]
-struct WorkspaceFile {
-    version: u32,
+pub(crate) struct StoredWorkspace {
     name: String,
+    #[serde(default)]
+    folded: bool,
     next_id: NodeId,
     root: Node,
     #[serde(default)]
@@ -142,13 +141,14 @@ struct WorkspaceFile {
 }
 
 /// Tree of groups, files and linked folders plus the workspace's session.
-/// Paths are absolute in memory; files store them relative to the workspace file's directory when possible.
+/// Paths are absolute in memory; the workspace store decides how they are written.
 #[derive(Clone, Debug)]
 pub struct Workspace {
     pub name: String,
     pub root: Node,
     pub session: Session,
-    file_path: Option<PathBuf>,
+    /// Collapsed to its name in the workspace tab strip.
+    pub folded: bool,
     next_id: NodeId,
     dirty: bool,
 }
@@ -162,12 +162,6 @@ fn map_paths(root: &mut Node, session: &mut Session, f: &dyn Fn(&Path) -> PathBu
     session.tabs.iter_mut().filter_map(|t| t.path.as_mut()).for_each(|p| *p = f(p));
 }
 
-fn parent_dir(file: &Path) -> Result<PathBuf, WsError> {
-    file.parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| WsError::Invalid(format!("no parent directory: {}", file.display())))
-}
-
 impl Workspace {
     pub fn new(name: &str) -> Workspace {
         let root =
@@ -176,56 +170,39 @@ impl Workspace {
             name: name.to_string(),
             root,
             session: Session::default(),
-            file_path: None,
+            folded: false,
             next_id: ROOT_ID + 1,
             dirty: false,
         }
     }
 
-    pub fn load(path: &Path) -> Result<Workspace, WsError> {
-        let file_path = absolute(path)?;
-        let file: WorkspaceFile = serde_json::from_str(&std::fs::read_to_string(&file_path)?)?;
-        ensure(file.version <= FILE_VERSION, &format!("unsupported workspace version {}", file.version))?;
-        ensure(file.root.is_group(), "root node must be a group")?;
+    /// Validates a stored workspace; relative paths resolve against `base`.
+    pub(crate) fn from_stored(stored: StoredWorkspace, base: Option<&Path>) -> Result<Workspace, WsError> {
+        ensure(stored.root.is_group(), "root node must be a group")?;
         let mut ids = HashSet::new();
-        validate(&file.root, &mut ids)?;
-        let base = parent_dir(&file_path)?;
-        let (mut root, mut session) = (file.root, file.session);
-        map_paths(&mut root, &mut session, &|p| from_stored(p, &base));
+        validate(&stored.root, &mut ids)?;
+        let (mut root, mut session) = (stored.root, stored.session);
+        if let Some(base) = base {
+            map_paths(&mut root, &mut session, &|p| from_stored(p, base));
+        }
         let max_id = ids.into_iter().max().unwrap_or(ROOT_ID);
         Ok(Workspace {
-            name: file.name,
+            name: stored.name,
             root,
             session,
-            file_path: Some(file_path),
-            next_id: file.next_id.max(max_id + 1),
+            folded: stored.folded,
+            next_id: stored.next_id.max(max_id + 1),
             dirty: false,
         })
     }
 
-    /// Atomic write to the current file; `Invalid` if the workspace has never been saved.
-    pub fn save(&mut self) -> Result<(), WsError> {
-        let path = self.file_path.clone().ok_or_else(|| WsError::Invalid("workspace has no file yet".into()))?;
-        self.save_as(&path)
-    }
-
-    pub fn save_as(&mut self, path: &Path) -> Result<(), WsError> {
-        let file_path = absolute(path)?;
-        let base = parent_dir(&file_path)?;
+    /// Stored form; with `base`, paths are written relative to it when possible, else absolute.
+    pub(crate) fn to_stored(&self, base: Option<&Path>) -> StoredWorkspace {
         let (mut root, mut session) = (self.root.clone(), self.session.clone());
-        map_paths(&mut root, &mut session, &|p| PathBuf::from(to_stored(p, &base)));
-        let file =
-            WorkspaceFile { version: FILE_VERSION, name: self.name.clone(), next_id: self.next_id, root, session };
-        let mut text = serde_json::to_string_pretty(&file)?;
-        text.push('\n');
-        write_atomic(&file_path, text.as_bytes())?;
-        self.file_path = Some(file_path);
-        self.dirty = false;
-        Ok(())
-    }
-
-    pub fn file_path(&self) -> Option<&Path> {
-        self.file_path.as_deref()
+        if let Some(base) = base {
+            map_paths(&mut root, &mut session, &|p| PathBuf::from(to_stored(p, base)));
+        }
+        StoredWorkspace { name: self.name.clone(), folded: self.folded, next_id: self.next_id, root, session }
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -234,6 +211,17 @@ impl Workspace {
 
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+
+    pub(crate) fn mark_clean(&mut self) {
+        self.dirty = false;
+    }
+
+    pub fn set_folded(&mut self, folded: bool) {
+        if self.folded != folded {
+            self.folded = folded;
+            self.dirty = true;
+        }
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {

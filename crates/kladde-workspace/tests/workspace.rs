@@ -8,11 +8,17 @@ fn touch(path: &Path) {
     fs::write(path, b"x").unwrap();
 }
 
+/// Store with one workspace `ws` that is active.
+fn store_of(ws: Workspace) -> WorkspaceStore {
+    WorkspaceStore { workspaces: vec![ws], active: 0 }
+}
+
 #[test]
-fn save_load_round_trip_stores_relative_slash_paths() {
+fn portable_store_round_trip_writes_relative_slash_paths() {
     let tmp = tempfile::tempdir().unwrap();
-    let proj = tmp.path().join("proj");
-    let inner = proj.join("src").join("a.txt");
+    let data = tmp.path().join("kladde-data");
+    fs::create_dir_all(&data).unwrap();
+    let inner = tmp.path().join("proj").join("src").join("a.txt");
     let outer = tmp.path().join("other").join("b.txt");
     touch(&inner);
     touch(&outer);
@@ -20,56 +26,99 @@ fn save_load_round_trip_stores_relative_slash_paths() {
     let group = ws.add_group(0, "Sources").unwrap();
     ws.add_file(group, &inner).unwrap();
     let outer_id = ws.add_file(0, &outer).unwrap();
-    ws.add_folder(0, &proj.join("docs"), vec!["*.md".into()], vec!["build".into()]).unwrap();
+    ws.add_folder(0, &tmp.path().join("proj").join("docs"), vec!["*.md".into()], vec!["build".into()]).unwrap();
     ws.set_color(group, Some(PALETTE[3]));
     ws.set_expanded(group, false);
+    ws.set_folded(true);
     ws.session.tabs.push(TabState { path: Some(inner.clone()), title: "a.txt".into(), ..Default::default() });
-    let file = proj.join("demo.kladde");
-    ws.save_as(&file).unwrap();
-    assert!(!ws.is_dirty());
+    let mut store = store_of(ws.clone());
+    let file = store_file(&data);
+    store.save(&file, Some(&data)).unwrap();
+    assert!(!store.is_dirty());
 
     let text = fs::read_to_string(&file).unwrap();
-    assert!(text.contains("\"src/a.txt\""), "{text}");
+    assert!(text.contains("\"../proj/src/a.txt\""), "{text}");
     assert!(text.contains("\"../other/b.txt\""), "{text}");
     assert!(!text.contains('\\'), "{text}");
-    assert!(text.contains("\"version\""));
 
-    let loaded = Workspace::load(&file).unwrap();
-    assert_eq!(loaded.name, "demo");
-    assert_eq!(loaded.root, ws.root);
-    assert_eq!(loaded.session, ws.session);
-    assert_eq!(loaded.node(outer_id).unwrap().path(), Some(outer.as_path()));
-    assert!(loaded.missing().iter().all(|id| loaded.node(*id).unwrap().display_name() == "docs"));
+    let loaded = WorkspaceStore::load(&file, Some(&data)).unwrap();
+    let w = loaded.current();
+    assert_eq!(w.name, "demo");
+    assert!(w.folded);
+    assert_eq!(w.root, ws.root);
+    assert_eq!(w.session, ws.session);
+    assert_eq!(w.node(outer_id).unwrap().path(), Some(outer.as_path()));
+    assert!(w.missing().iter().all(|id| w.node(*id).unwrap().display_name() == "docs"));
+}
+
+#[test]
+fn store_without_base_keeps_absolute_paths_and_active_index() {
+    let tmp = tempfile::tempdir().unwrap();
+    let file = store_file(tmp.path());
+    let target = tmp.path().join("x").join("a.txt");
+    let mut store = WorkspaceStore::default();
+    let second = store.add("Notes");
+    store.workspaces[second].add_file(0, &target).unwrap();
+    store.active = second;
+    store.save(&file, None).unwrap();
+
+    let loaded = WorkspaceStore::load(&file, None).unwrap();
+    assert_eq!(loaded.workspaces.len(), 2);
+    assert_eq!(loaded.active, second);
+    assert_eq!(loaded.current().name, "Notes");
+    assert_eq!(loaded.current().all_files(10), vec![target]);
+}
+
+#[test]
+fn missing_store_file_yields_one_default_workspace() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = WorkspaceStore::load(&store_file(tmp.path()), None).unwrap();
+    assert_eq!(store.workspaces.len(), 1);
+    assert_eq!(store.current().name, DEFAULT_WORKSPACE);
 }
 
 #[test]
 fn ids_stay_unique_after_reload() {
     let tmp = tempfile::tempdir().unwrap();
-    let file = tmp.path().join("w.kladde");
+    let file = store_file(tmp.path());
     let mut ws = Workspace::new("w");
     let a = ws.add_group(0, "a").unwrap();
     let b = ws.add_group(0, "b").unwrap();
     ws.remove(b).unwrap();
-    ws.save_as(&file).unwrap();
-    let mut loaded = Workspace::load(&file).unwrap();
-    let c = loaded.add_group(0, "c").unwrap();
+    store_of(ws).save(&file, None).unwrap();
+    let mut loaded = WorkspaceStore::load(&file, None).unwrap();
+    let c = loaded.current_mut().add_group(0, "c").unwrap();
     assert!(c != a && c != b);
     assert!(loaded.is_dirty());
 }
 
 #[test]
-fn load_rejects_duplicate_ids() {
+fn load_rejects_duplicate_ids_and_empty_lists() {
     let tmp = tempfile::tempdir().unwrap();
-    let file = tmp.path().join("bad.kladde");
-    let json = r#"{"version":1,"name":"x","next_id":3,"root":{"id":0,"kind":"Group","children":[
-        {"id":1,"kind":"Group"},{"id":1,"kind":"Group"}]}}"#;
+    let file = store_file(tmp.path());
+    let json = r#"{"version":1,"active":0,"workspaces":[{"name":"x","next_id":3,"root":{"id":0,"kind":"Group",
+        "children":[{"id":1,"kind":"Group"},{"id":1,"kind":"Group"}]}}]}"#;
     fs::write(&file, json).unwrap();
-    assert!(matches!(Workspace::load(&file), Err(WsError::Invalid(_))));
+    assert!(matches!(WorkspaceStore::load(&file, None), Err(WsError::Invalid(_))));
+    fs::write(&file, r#"{"version":1,"active":0,"workspaces":[]}"#).unwrap();
+    assert!(matches!(WorkspaceStore::load(&file, None), Err(WsError::Invalid(_))));
 }
 
 #[test]
-fn save_without_file_is_invalid() {
-    assert!(matches!(Workspace::new("x").save(), Err(WsError::Invalid(_))));
+fn add_rename_remove_keep_names_unique_and_active_valid() {
+    let mut store = WorkspaceStore::default();
+    let a = store.add("Notes");
+    let b = store.add("notes");
+    assert_eq!(store.workspaces[b].name, "notes 2");
+    assert!(matches!(store.rename(b, "NOTES"), Err(WsError::Invalid(_))));
+    assert!(matches!(store.rename(b, "  "), Err(WsError::Invalid(_))));
+    store.rename(b, "Logs").unwrap();
+    store.active = b;
+    store.remove(a).unwrap();
+    assert_eq!(store.current().name, "Logs");
+    store.remove(store.active).unwrap();
+    assert_eq!(store.current().name, DEFAULT_WORKSPACE);
+    assert!(matches!(store.remove(0), Err(WsError::Invalid(_))));
 }
 
 #[test]
@@ -225,18 +274,4 @@ fn recent_lists_are_unique_newest_first_and_capped() {
     assert_eq!(s.recent_files[0], Path::new("/f10"));
     assert_eq!(s.recent_files[1], Path::new("/f24"));
     assert_eq!(s.recent_files.iter().filter(|p| *p == Path::new("/f10")).count(), 1);
-}
-
-#[test]
-fn session_round_trip() {
-    let tmp = tempfile::tempdir().unwrap();
-    let path = tmp.path().join("session.json");
-    let session = Session {
-        tabs: vec![TabState { title: "x".into(), view: ViewKind::Hex, caret: 7, ..Default::default() }],
-        active: [Some(0), None],
-        split: SplitMode::Vertical,
-        split_ratio: 0.5,
-    };
-    session.save(&path).unwrap();
-    assert_eq!(Session::load(&path).unwrap(), session);
 }

@@ -5,7 +5,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.83"
+rust-version = "1.85"
 publish = false
 
 [workspace.dependencies]
@@ -17,6 +17,7 @@ kladde-editor = { path = "crates/kladde-editor" }
 kladde-hex = { path = "crates/kladde-hex" }
 kladde-wstree = { path = "crates/kladde-wstree" }
 kladde-panels = { path = "crates/kladde-panels" }
+kladde-update = { path = "crates/kladde-update" }
 
 memmap2 = "0.9"
 memchr = "2"
@@ -38,6 +39,7 @@ egui = "0.29"
 eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 rfd = "0.15"
 tempfile = "3"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [profile.release]
 opt-level = 3

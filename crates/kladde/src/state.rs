@@ -11,7 +11,7 @@ use kladde_editor::EditorState;
 use kladde_hex::HexState;
 use kladde_panels::Keymap;
 use kladde_tools::History;
-use kladde_workspace::{Settings, SplitMode, ViewKind, Workspace};
+use kladde_workspace::{Settings, SplitMode, ViewKind, WorkspaceStore};
 
 pub type DocId = u64;
 
@@ -78,8 +78,8 @@ pub struct App {
     pub data_dir: PathBuf,
     pub settings: Settings,
     pub keymap: Keymap,
-    pub workspaces: Vec<Workspace>,
-    pub active_ws: Option<usize>,
+    /// All workspaces; the active one owns the open tabs.
+    pub ws: WorkspaceStore,
     pub docs: HashMap<DocId, DocEntry>,
     pub next_doc_id: DocId,
     pub untitled_counter: u32,

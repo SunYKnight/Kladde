@@ -19,6 +19,7 @@ kladde-editor = { workspace = true }
 kladde-hex = { workspace = true }
 kladde-wstree = { workspace = true }
 kladde-panels = { workspace = true }
+kladde-update = { workspace = true }
 egui = { workspace = true }
 eframe = { workspace = true }
 rfd = { workspace = true }

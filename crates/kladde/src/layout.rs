@@ -1,8 +1,8 @@
-//! Window layout: workspace side panel, bottom panel and the central split with tab bars and views.
+//! Window layout: workspace side panel, bottom panel and the central split with views.
 
 use std::path::{Path, PathBuf};
 
-use egui::{Color32, Rect, Sense, Ui, UiBuilder};
+use egui::{Rect, Sense, Ui, UiBuilder};
 use kladde_core::{OpenMode, OpenOptions};
 use kladde_editor::EditorEvent;
 use kladde_hex::HexEvent;
@@ -16,7 +16,7 @@ use crate::state::{App, DiskNotice, DocId};
 /// Width (or height) of the draggable split separator.
 const SPLITTER: f32 = 6.0;
 
-enum TabAction {
+pub(crate) enum TabAction {
     Focus(usize),
     Close(usize),
     CloseOthers(usize),
@@ -31,14 +31,6 @@ enum PaneAction {
     IgnoreDisk(DocId),
     CloseDoc(DocId),
     CancelLoad(DocId),
-}
-
-enum WsAction {
-    Switch(usize),
-    New,
-    Open,
-    Save,
-    Close,
 }
 
 /// Folder that contains `path` (or `path` itself when it is a folder).
@@ -58,71 +50,14 @@ impl App {
         self.shell.tree_id = None;
         if self.shell.side_visible {
             egui::SidePanel::left("kladde_workspace").resizable(true).default_width(250.0).show(ctx, |ui| {
-                let action = self.workspace_bar(ui);
+                ui.strong(&self.ws.current().name);
                 ui.separator();
-                match self.active_ws {
-                    Some(i) => self.show_tree(ctx, ui, i),
-                    None => {
-                        ui.weak("No workspace is open. Create or open one with the buttons above.");
-                    }
-                }
-                match action {
-                    Some(WsAction::Switch(i)) => self.switch_workspace(i),
-                    Some(WsAction::New) => self.new_workspace(),
-                    Some(WsAction::Open) => {
-                        let picked = rfd::FileDialog::new().add_filter("Kladde workspace", &["kladde"]).pick_file();
-                        if let Some(p) = picked {
-                            self.open_workspace(&p);
-                        }
-                    }
-                    Some(WsAction::Save) => self.save_workspace(),
-                    Some(WsAction::Close) => self.close_workspace(),
-                    None => {}
-                }
+                self.show_tree(ctx, ui);
             });
         }
     }
 
-    /// Workspace switcher and New/Open/Save/Close buttons (W8).
-    fn workspace_bar(&mut self, ui: &mut Ui) -> Option<WsAction> {
-        let mut action = None;
-        let current = self.active_ws.map_or("(no workspace)".to_string(), |i| {
-            let ws = &self.workspaces[i];
-            if ws.is_dirty() {
-                format!("{} •", ws.name)
-            } else {
-                ws.name.clone()
-            }
-        });
-        egui::ComboBox::from_id_salt("kladde_ws_switch").selected_text(current).width(ui.available_width()).show_ui(
-            ui,
-            |ui| {
-                self.workspaces.iter().enumerate().for_each(|(i, ws)| {
-                    if ui.selectable_label(self.active_ws == Some(i), &ws.name).clicked() {
-                        action = Some(WsAction::Switch(i));
-                    }
-                });
-            },
-        );
-        ui.horizontal(|ui| {
-            if ui.button("New").on_hover_text("Create a workspace file").clicked() {
-                action = Some(WsAction::New);
-            }
-            if ui.button("Open").on_hover_text("Open a *.kladde workspace").clicked() {
-                action = Some(WsAction::Open);
-            }
-            let has_ws = self.active_ws.is_some();
-            if ui.add_enabled(has_ws, egui::Button::new("Save")).clicked() {
-                action = Some(WsAction::Save);
-            }
-            if ui.add_enabled(has_ws, egui::Button::new("Close")).clicked() {
-                action = Some(WsAction::Close);
-            }
-        });
-        action
-    }
-
-    fn show_tree(&mut self, ctx: &egui::Context, ui: &mut Ui, i: usize) {
+    fn show_tree(&mut self, ctx: &egui::Context, ui: &mut Ui) {
         let open_files = self.open_files_set();
         let dirty_files = self.dirty_files_set();
         let active_file = self.active_tab().and_then(|(p, t)| self.doc_path(self.panes[p].tabs[t].doc));
@@ -136,11 +71,11 @@ impl App {
             quarto_available: self.quarto.is_some(),
             dark,
         };
-        let events = kladde_wstree::show(ui, &mut self.workspaces[i], &mut self.shell.tree, &tree_ctx);
-        events.into_iter().for_each(|ev| self.tree_event(ctx, i, ev));
+        let events = kladde_wstree::show(ui, self.ws.current_mut(), &mut self.shell.tree, &tree_ctx);
+        events.into_iter().for_each(|ev| self.tree_event(ctx, ev));
     }
 
-    fn tree_event(&mut self, ctx: &egui::Context, ws: usize, ev: TreeEvent) {
+    fn tree_event(&mut self, ctx: &egui::Context, ev: TreeEvent) {
         match ev {
             TreeEvent::Open(path) => {
                 self.open_path(&path, auto_open(), None);
@@ -154,7 +89,7 @@ impl App {
                     .unwrap_or_default()
                     .iter()
                     .filter_map(|f| {
-                        self.workspaces[ws].add_file(parent, f).err().map(|e| format!("{}: {e}", f.display()))
+                        self.ws.current_mut().add_file(parent, f).err().map(|e| format!("{}: {e}", f.display()))
                     })
                     .collect();
                 errors.into_iter().for_each(|e| self.toast_error(format!("Cannot add file {e}")));
@@ -162,18 +97,18 @@ impl App {
             }
             TreeEvent::AddFolder { parent } => {
                 if let Some(dir) = rfd::FileDialog::new().set_title("Link a folder").pick_folder() {
-                    if let Err(e) = self.workspaces[ws].add_folder(parent, &dir, Vec::new(), Vec::new()) {
+                    if let Err(e) = self.ws.current_mut().add_folder(parent, &dir, Vec::new(), Vec::new()) {
                         self.toast_error(format!("Cannot add folder {}: {e}", dir.display()));
                     }
                     self.refresh_git();
                 }
             }
             TreeEvent::Relocate { node } => {
-                let folder = self.workspaces[ws].node(node).is_some_and(|n| matches!(n.kind, NodeKind::Folder { .. }));
+                let folder = self.ws.current().node(node).is_some_and(|n| matches!(n.kind, NodeKind::Folder { .. }));
                 let dialog = rfd::FileDialog::new().set_title("Relocate");
                 let picked = if folder { dialog.pick_folder() } else { dialog.pick_file() };
                 if let Some(p) = picked {
-                    self.workspaces[ws].relocate(node, &p);
+                    self.ws.current_mut().relocate(node, &p);
                     self.refresh_git();
                 }
             }
@@ -288,8 +223,11 @@ impl App {
     }
 
     fn show_pane(&mut self, ctx: &egui::Context, ui: &mut Ui, pane: usize) {
-        let actions = self.tab_bar(ui, pane);
-        actions.into_iter().for_each(|a| self.tab_action(pane, a));
+        // Pane 0's tabs sit in the workspace strip below the menu bar.
+        if pane == 1 {
+            let actions = self.pane_tab_bar(ui, pane);
+            actions.into_iter().for_each(|a| self.tab_action(pane, a));
+        }
         let current = self.panes[pane].tabs.get(self.panes[pane].active).map(|t| t.doc);
         match current {
             None => {
@@ -313,97 +251,91 @@ impl App {
         }
     }
 
-    /// Tab strip with color accent, dirty dot, close button and context menu.
-    fn tab_bar(&mut self, ui: &mut Ui, pane: usize) -> Vec<TabAction> {
+    /// Tab strip of the second pane.
+    fn pane_tab_bar(&mut self, ui: &mut Ui, pane: usize) -> Vec<TabAction> {
         let mut actions = Vec::new();
-        let focused = pane == self.focused_pane && self.split != SplitMode::None;
-        let titles: Vec<(String, bool, Option<PathBuf>)> = self.panes[pane]
-            .tabs
-            .iter()
-            .map(|t| {
-                let entry = self.docs.get(&t.doc);
-                let title = entry.map_or(String::new(), |e| e.title.clone());
-                let dirty = entry.is_some_and(|e| e.doc.is_dirty());
-                (title, dirty, self.doc_path(t.doc))
-            })
-            .collect();
-        let accents: Vec<Option<Color32>> = titles
-            .iter()
-            .map(|(_, _, p)| {
-                let ws = self.active_ws.map(|i| &self.workspaces[i]);
-                p.as_deref().and_then(|p| ws.and_then(|w| w.color_for_path(p))).map(crate::theme::color32)
-            })
-            .collect();
-        let active = self.panes[pane].active;
         egui::Frame::none().inner_margin(egui::Margin::symmetric(4.0, 2.0)).show(ui, |ui| {
             egui::ScrollArea::horizontal().id_salt(("kladde_tabs", pane)).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    titles.iter().enumerate().for_each(|(i, (title, dirty, path))| {
-                        let text = if *dirty { format!("• {title}") } else { title.clone() };
-                        let selected = i == active;
-                        let mut rich = egui::RichText::new(text);
-                        if selected && focused {
-                            rich = rich.strong();
-                        }
-                        let response = ui.selectable_label(selected, rich);
-                        if let Some(color) = accents[i] {
-                            let r = response.rect;
-                            let bar = Rect::from_min_max(egui::pos2(r.min.x, r.max.y - 2.0), r.max);
-                            ui.painter().rect_filled(bar, 0.0, color);
-                        }
-                        let response = match path {
-                            Some(p) => response.on_hover_text(p.display().to_string()),
-                            None => response,
-                        };
-                        if response.clicked() {
-                            actions.push(TabAction::Focus(i));
-                        }
-                        if response.middle_clicked() {
-                            actions.push(TabAction::Close(i));
-                        }
-                        response.context_menu(|ui| {
-                            if ui.button("Close").clicked() {
-                                actions.push(TabAction::Close(i));
-                                ui.close_menu();
-                            }
-                            if ui.button("Close others").clicked() {
-                                actions.push(TabAction::CloseOthers(i));
-                                ui.close_menu();
-                            }
-                            ui.separator();
-                            if let Some(p) = path {
-                                if ui.button("Copy path").clicked() {
-                                    actions.push(TabAction::CopyPath(p.clone()));
-                                    ui.close_menu();
-                                }
-                                if ui.button("Reveal in file manager").clicked() {
-                                    actions.push(TabAction::Reveal(p.clone()));
-                                    ui.close_menu();
-                                }
-                                ui.separator();
-                            }
-                            if ui.button("Move to other pane").clicked() {
-                                actions.push(TabAction::MoveToOther(i));
-                                ui.close_menu();
-                            }
-                            if ui.button("Open in other pane").clicked() {
-                                actions.push(TabAction::OpenInOther(i));
-                                ui.close_menu();
-                            }
-                        });
-                        if ui.small_button("×").on_hover_text("Close").clicked() {
-                            actions.push(TabAction::Close(i));
-                        }
-                        ui.add_space(6.0);
-                    });
-                });
+                ui.horizontal(|ui| actions = self.tab_chips(ui, pane));
             });
         });
         ui.separator();
         actions
     }
 
-    fn tab_action(&mut self, pane: usize, action: TabAction) {
+    /// Tabs of `pane` with color accent, dirty dot, close button and context menu, laid out in `ui`.
+    pub(crate) fn tab_chips(&self, ui: &mut Ui, pane: usize) -> Vec<TabAction> {
+        let mut actions = Vec::new();
+        let focused = pane == self.focused_pane && self.split != SplitMode::None;
+        let ws = self.ws.current();
+        let active = self.panes[pane].active;
+        self.panes[pane].tabs.iter().enumerate().for_each(|(i, t)| {
+            let entry = self.docs.get(&t.doc);
+            let title = entry.map_or(String::new(), |e| e.title.clone());
+            let dirty = entry.is_some_and(|e| e.doc.is_dirty());
+            let path = self.doc_path(t.doc);
+            let accent = path.as_deref().and_then(|p| ws.color_for_path(p)).map(crate::theme::color32);
+            let text = if dirty { format!("• {title}") } else { title };
+            let selected = i == active;
+            let mut rich = egui::RichText::new(text);
+            if selected && focused {
+                rich = rich.strong();
+            }
+            let response = ui.selectable_label(selected, rich);
+            if let Some(color) = accent {
+                let r = response.rect;
+                let bar = Rect::from_min_max(egui::pos2(r.min.x, r.max.y - 2.0), r.max);
+                ui.painter().rect_filled(bar, 0.0, color);
+            }
+            let response = match &path {
+                Some(p) => response.on_hover_text(p.display().to_string()),
+                None => response,
+            };
+            if response.clicked() {
+                actions.push(TabAction::Focus(i));
+            }
+            if response.middle_clicked() {
+                actions.push(TabAction::Close(i));
+            }
+            response.context_menu(|ui| {
+                if ui.button("Close").clicked() {
+                    actions.push(TabAction::Close(i));
+                    ui.close_menu();
+                }
+                if ui.button("Close others").clicked() {
+                    actions.push(TabAction::CloseOthers(i));
+                    ui.close_menu();
+                }
+                ui.separator();
+                if let Some(p) = &path {
+                    if ui.button("Copy path").clicked() {
+                        actions.push(TabAction::CopyPath(p.clone()));
+                        ui.close_menu();
+                    }
+                    if ui.button("Reveal in file manager").clicked() {
+                        actions.push(TabAction::Reveal(p.clone()));
+                        ui.close_menu();
+                    }
+                    ui.separator();
+                }
+                if ui.button("Move to other pane").clicked() {
+                    actions.push(TabAction::MoveToOther(i));
+                    ui.close_menu();
+                }
+                if ui.button("Open in other pane").clicked() {
+                    actions.push(TabAction::OpenInOther(i));
+                    ui.close_menu();
+                }
+            });
+            if ui.small_button("×").on_hover_text("Close").clicked() {
+                actions.push(TabAction::Close(i));
+            }
+            ui.add_space(6.0);
+        });
+        actions
+    }
+
+    pub(crate) fn tab_action(&mut self, pane: usize, action: TabAction) {
         match action {
             TabAction::Focus(i) => self.focus_tab(pane, i),
             TabAction::Close(i) => self.close_tab(pane, i),

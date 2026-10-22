@@ -473,11 +473,7 @@ impl App {
             Some(path) => Some(path.to_path_buf()),
             None => {
                 let mut dialog = rfd::FileDialog::new().set_title("Save as").set_file_name(entry.title.as_str());
-                let dir = entry.doc.path().and_then(Path::parent).map(Path::to_path_buf).or_else(|| {
-                    self.active_ws
-                        .and_then(|i| self.workspaces[i].file_path().and_then(Path::parent).map(Path::to_path_buf))
-                });
-                if let Some(dir) = dir {
+                if let Some(dir) = entry.doc.path().and_then(Path::parent) {
                     dialog = dialog.set_directory(dir);
                 }
                 dialog.save_file()

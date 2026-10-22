@@ -13,6 +13,8 @@ mod state;
 mod status;
 mod theme;
 mod tools;
+mod update;
+mod wsbar;
 
 use std::path::PathBuf;
 
