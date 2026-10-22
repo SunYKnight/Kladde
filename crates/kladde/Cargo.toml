@@ -24,6 +24,9 @@ egui = { workspace = true }
 eframe = { workspace = true }
 rfd = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+winit = { workspace = true }
+
 [build-dependencies]
 embed-resource = { workspace = true }
 

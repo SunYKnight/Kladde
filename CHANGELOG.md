@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.3
+
+### Added
+
+- Dropping files or folders on the window asks whether to open them, add them to the active workspace, or both.
+- Tab context menu: "Add to workspace".
+
+### Changed
+
+- Linux: Kladde runs through XWayland in Wayland sessions, where the window library has no file drag & drop.
+
+### Fixed
+
+- Adding a file or folder that is already in the workspace no longer creates a second entry.
+
 ## 0.1.2
 
 ### Added

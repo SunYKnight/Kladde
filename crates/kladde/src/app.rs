@@ -199,9 +199,12 @@ impl App {
 
     fn handle_dropped(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| i.raw.dropped_files.iter().filter_map(|f| f.path.clone()).collect());
-        dropped.iter().for_each(|p| {
-            self.open_path(p, crate::docs::auto_open(), None);
-        });
+        if !dropped.is_empty() {
+            match self.shell.ws_prompt.as_mut() {
+                Some(crate::wsbar::WsPrompt::Drop(pending)) => pending.extend(dropped),
+                _ => self.shell.ws_prompt = Some(crate::wsbar::WsPrompt::Drop(dropped)),
+            }
+        }
     }
 
     fn background_busy(&self) -> bool {

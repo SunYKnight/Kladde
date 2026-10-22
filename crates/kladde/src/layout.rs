@@ -6,7 +6,7 @@ use egui::{Rect, Sense, Ui, UiBuilder};
 use kladde_core::{OpenMode, OpenOptions};
 use kladde_editor::EditorEvent;
 use kladde_hex::HexEvent;
-use kladde_workspace::{NodeKind, SplitMode, ViewKind};
+use kladde_workspace::{NodeId, NodeKind, SplitMode, ViewKind};
 use kladde_wstree::{TreeContext, TreeEvent};
 
 use crate::commands::BottomTab;
@@ -24,6 +24,7 @@ pub(crate) enum TabAction {
     Reveal(PathBuf),
     MoveToOther(usize),
     OpenInOther(usize),
+    AddToWorkspace(PathBuf),
 }
 
 enum PaneAction {
@@ -85,22 +86,11 @@ impl App {
             }
             TreeEvent::AddFiles { parent } => {
                 let files = rfd::FileDialog::new().set_title("Add files to the workspace").pick_files();
-                let errors: Vec<String> = files
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(|f| {
-                        self.ws.current_mut().add_file(parent, f).err().map(|e| format!("{}: {e}", f.display()))
-                    })
-                    .collect();
-                errors.into_iter().for_each(|e| self.toast_error(format!("Cannot add file {e}")));
-                self.refresh_git();
+                self.add_to_workspace(parent, &files.unwrap_or_default());
             }
             TreeEvent::AddFolder { parent } => {
                 if let Some(dir) = rfd::FileDialog::new().set_title("Link a folder").pick_folder() {
-                    if let Err(e) = self.ws.current_mut().add_folder(parent, &dir, Vec::new(), Vec::new()) {
-                        self.toast_error(format!("Cannot add folder {}: {e}", dir.display()));
-                    }
-                    self.refresh_git();
+                    self.add_to_workspace(parent, &[dir]);
                 }
             }
             TreeEvent::Relocate { node } => {
@@ -121,6 +111,40 @@ impl App {
                 self.refresh_git();
             }
             other => self.handle_tree_action(ctx, other),
+        }
+    }
+
+    /// Adds files and folders (as linked folders) under `parent` of the active workspace; paths that are
+    /// already in it are skipped, since a second entry for the same file is never wanted.
+    pub(crate) fn add_to_workspace(&mut self, parent: NodeId, paths: &[PathBuf]) {
+        let (present, new): (Vec<&PathBuf>, Vec<&PathBuf>) =
+            paths.iter().partition(|p| self.ws.current().find_by_path(p).is_some());
+        let results: Vec<Result<NodeId, String>> = new
+            .iter()
+            .map(|p| {
+                let ws = self.ws.current_mut();
+                let added = match p.is_dir() {
+                    true => ws.add_folder(parent, p, Vec::new(), Vec::new()),
+                    false => ws.add_file(parent, p),
+                };
+                added.map_err(|e| format!("Cannot add {}: {e}", p.display()))
+            })
+            .collect();
+        let added = results.iter().filter(|r| r.is_ok()).count();
+        results.into_iter().filter_map(Result::err).for_each(|e| self.toast_error(e));
+        let name = self.ws.current().name.clone();
+        match (added, new.as_slice()) {
+            (0, _) => {}
+            (1, [p]) => self.toast_info(format!("Added {} to workspace {name}", crate::commands::file_name(p))),
+            (n, _) => self.toast_info(format!("Added {n} items to workspace {name}")),
+        }
+        match present.as_slice() {
+            [] => {}
+            [p] => self.toast_info(format!("{} is already in workspace {name}", crate::commands::file_name(p))),
+            many => self.toast_info(format!("{} items are already in workspace {name}", many.len())),
+        }
+        if added > 0 {
+            self.refresh_git();
         }
     }
 
@@ -316,6 +340,10 @@ impl App {
                         actions.push(TabAction::Reveal(p.clone()));
                         ui.close_menu();
                     }
+                    if ui.button("Add to workspace").clicked() {
+                        actions.push(TabAction::AddToWorkspace(p.clone()));
+                        ui.close_menu();
+                    }
                     ui.separator();
                 }
                 if ui.button("Move to other pane").clicked() {
@@ -351,6 +379,10 @@ impl App {
             }
             TabAction::CopyPath(p) => self.shell.ctx.copy_text(p.display().to_string()),
             TabAction::Reveal(p) => self.reveal(&p),
+            TabAction::AddToWorkspace(p) => {
+                let root = self.ws.current().root.id;
+                self.add_to_workspace(root, &[p]);
+            }
             TabAction::MoveToOther(i) => {
                 if i < self.panes[pane].tabs.len() {
                     let tab = self.panes[pane].tabs.remove(i);

@@ -1,5 +1,7 @@
 //! Workspace strip below the menu bar: every workspace as a tab group, folded to `▸ Name` or unfolded to
-//! `▾ Name` followed by its file tabs (W8), plus the name and delete dialogs.
+//! `▾ Name` followed by its file tabs (W8), plus the name, delete and file drop dialogs.
+
+use std::path::PathBuf;
 
 use egui::{Color32, Rect, RichText, Sense, Ui};
 
@@ -15,6 +17,8 @@ pub enum WsPrompt {
         focus: bool,
     },
     Delete(usize),
+    /// Files or folders dropped on the window; a drop carries no position, so the user picks the target.
+    Drop(Vec<PathBuf>),
 }
 
 impl WsPrompt {
@@ -143,10 +147,11 @@ impl App {
         }
     }
 
-    /// Name dialog for new/renamed workspaces and the delete confirmation.
+    /// Name dialog for new/renamed workspaces, the delete confirmation and the drop choice.
     pub(crate) fn show_ws_prompt(&mut self, ctx: &egui::Context) {
         let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
         let mut done: Option<bool> = esc.then_some(false);
+        let mut drop_choice = (false, false);
         match self.shell.ws_prompt.as_mut() {
             Some(WsPrompt::Name { rename, input, focus }) => {
                 let title = if rename.is_some() { "Rename workspace" } else { "New workspace" };
@@ -199,6 +204,38 @@ impl App {
                         });
                     });
             }
+            Some(WsPrompt::Drop(paths)) => {
+                let files = paths.iter().filter(|p| !p.is_dir()).count();
+                let what = match (paths.len(), files) {
+                    (1, 1) => format!("File {}", crate::commands::file_name(&paths[0])),
+                    (1, _) => format!("Folder {}", crate::commands::file_name(&paths[0])),
+                    (n, _) => format!("{n} items"),
+                };
+                let ws = &self.ws.current().name;
+                egui::Window::new("Dropped files")
+                    .collapsible(false)
+                    .resizable(false)
+                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                    .show(ctx, |ui| {
+                        ui.label(format!("{what}: open, or add to workspace {ws}?"));
+                        if files < paths.len() {
+                            ui.weak("Folders are added as linked folders; only files open as tabs.");
+                        }
+                        ui.horizontal(|ui| {
+                            let choices =
+                                [("Open", true, false), ("Add to workspace", false, true), ("Both", true, true)];
+                            choices.into_iter().for_each(|(label, open, add)| {
+                                if ui.add_enabled(add || files > 0, egui::Button::new(label)).clicked() {
+                                    drop_choice = (open, add);
+                                    done = Some(true);
+                                }
+                            });
+                            if ui.button("Cancel").clicked() {
+                                done = Some(false);
+                            }
+                        });
+                    });
+            }
             None => done = None,
         }
         if let Some(confirmed) = done {
@@ -206,8 +243,22 @@ impl App {
                 (true, Some(WsPrompt::Name { rename: None, input, .. })) => self.new_workspace(&input),
                 (true, Some(WsPrompt::Name { rename: Some(i), input, .. })) => self.rename_workspace(i, &input),
                 (true, Some(WsPrompt::Delete(i))) => self.delete_workspace(i),
+                (true, Some(WsPrompt::Drop(paths))) => self.dropped_choice(&paths, drop_choice),
                 _ => {}
             }
+        }
+    }
+
+    /// Opens the dropped files and/or adds files and folders to the active workspace.
+    fn dropped_choice(&mut self, paths: &[PathBuf], (open, add): (bool, bool)) {
+        if add {
+            let root = self.ws.current().root.id;
+            self.add_to_workspace(root, paths);
+        }
+        if open {
+            paths.iter().filter(|p| !p.is_dir()).for_each(|p| {
+                self.open_path(p, crate::docs::auto_open(), None);
+            });
         }
     }
 }

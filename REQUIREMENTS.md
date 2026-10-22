@@ -92,7 +92,7 @@ Priority: **M** = first release, **2** = second iteration, **L** = later. All it
 ## Platform and weight
 | ID | Requirement | Prio |
 |---|---|---|
-| P1 | Windows 11 and Linux (X11 and Wayland); one executable, no installer | M |
+| P1 | Windows 11 and Linux (X11; Wayland sessions run through XWayland when available, for file drag & drop); one executable, no installer | M |
 | P2 | Targets: <15 MB on disk, <200 ms start, <50 MB idle RAM | M |
 | P3 | Dark/light theme following the OS; sharp on high-DPI | M |
 | P4 | Portable mode: settings next to the executable | M |
@@ -115,7 +115,7 @@ Priority: **M** = first release, **2** = second iteration, **L** = later. All it
 | X5 | Base64, URL and hex encode/decode of selection | 2 |
 | X6 | MD5/SHA-1/SHA-256/CRC32 of selection or whole file (streamed) | 2 |
 | X7 | Automatic backup snapshots every N seconds | M |
-| X8 | Recent files; open by drag & drop | M |
+| X8 | Recent files; drag & drop files onto the window: open, add to the workspace, or both | M |
 | X9 | Git status markers in the workspace tree (read-only) | L |
 | X10 | CSV as table | L |
 | X11 | Plugin system | out of scope (lightweight) |

@@ -326,7 +326,7 @@ pub fn poll_task<T>(rx: &Receiver<T>, what: &str) -> Option<Result<T, String>> {
     }
 }
 
-fn file_name(path: &Path) -> String {
+pub(crate) fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned())
 }
 
@@ -551,16 +551,9 @@ impl App {
     }
 
     fn add_current_file_to_workspace(&mut self) {
-        let path = self.focused_doc().and_then(|id| self.doc_path(id));
-        let added = path.clone().map(|p| {
-            let ws = self.ws.current_mut();
-            let root = ws.root.id;
-            ws.add_file(root, &p)
-        });
-        match (added, path) {
-            (Some(Ok(_)), Some(p)) => self.toast_info(format!("Added {} to the workspace", file_name(&p))),
-            (Some(Err(e)), _) => self.toast_error(format!("Could not add file: {e}")),
-            _ => {}
+        if let Some(p) = self.focused_doc().and_then(|id| self.doc_path(id)) {
+            let root = self.ws.current().root.id;
+            self.add_to_workspace(root, &[p]);
         }
     }
 
