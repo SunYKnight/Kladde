@@ -171,7 +171,7 @@ fn reformat_json(text: &str, pretty: bool) -> Result<String, String> {
 
 fn newline(out: &mut String, depth: usize) {
     out.push('\n');
-    out.extend(std::iter::repeat("  ").take(depth));
+    out.extend(std::iter::repeat_n("  ", depth));
 }
 
 /// Re-indents well-formed XML (two spaces); whitespace-only text between tags is dropped.

@@ -199,8 +199,10 @@ impl Interpreter {
         match self {
             Interpreter::PowerShell => {
                 let mut args: Vec<OsString> =
-                    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File"].map(OsString::from).into();
-                args.push(script.as_os_str().to_os_string());
+                    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"]
+                        .map(OsString::from)
+                        .into();
+                args.push(powershell_invocation(script).into());
                 args
             }
             Interpreter::Bash => vec![shell_path(script)],
@@ -232,19 +234,24 @@ impl Interpreter {
             text.push('\n');
         }
         match self {
-            // PS 5.1 reads BOM-less scripts as ANSI, writes pipes as OEM.
-            Interpreter::PowerShell => {
-                let mut bytes = vec![0xEF, 0xBB, 0xBF];
-                let prefix = if cfg!(windows) { "[Console]::OutputEncoding = [Text.Encoding]::UTF8\n" } else { "" };
-                bytes.extend_from_slice(prefix.as_bytes());
-                bytes.extend_from_slice(text.as_bytes());
-                bytes
-            }
+            // PS 5.1 reads BOM-less scripts as ANSI.
+            Interpreter::PowerShell => [&[0xEF, 0xBB, 0xBF], text.as_bytes()].concat(),
             // LF-only batch files break labels; chcp makes cmd emit UTF-8.
             Interpreter::Cmd => format!("@chcp 65001 >nul\r\n{}", text.replace('\n', "\r\n")).into_bytes(),
             Interpreter::Bash | Interpreter::Python | Interpreter::Node | Interpreter::R => text.into_bytes(),
         }
     }
+}
+
+/// PowerShell command running `script`. UTF-8 output is set here because PS 5.1 prints parse errors (in the
+/// OEM code page) before any script line runs. Exit code as with `-File`: the script's `exit` value, 1 after
+/// a parse or terminating error, else 0; a failing native command as the last step passes its code through.
+fn powershell_invocation(script: &Path) -> String {
+    let quoted = script.to_string_lossy().replace('\'', "''");
+    format!(
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8; $LASTEXITCODE = 0; & '{quoted}'; \
+         if (-not $?) {{ if ($LASTEXITCODE) {{ exit $LASTEXITCODE }} else {{ exit 1 }} }}; exit $LASTEXITCODE"
+    )
 }
 
 #[cfg(windows)]
@@ -667,7 +674,7 @@ mod tests {
     fn windows_bash_is_git_bash_not_wsl() {
         let system = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string()).to_lowercase();
         let bash = Interpreter::Bash.program();
-        assert!(bash.as_ref().map_or(true, |p| !p.to_string_lossy().to_lowercase().starts_with(&system)), "{bash:?}");
+        assert!(bash.as_ref().is_none_or(|p| !p.to_string_lossy().to_lowercase().starts_with(&system)), "{bash:?}");
         if find_program("git").is_some() {
             assert!(bash.is_some(), "git is installed, so Git Bash must be found");
         }
@@ -704,6 +711,30 @@ mod tests {
         assert_eq!(events.last(), Some(&RunEvent::Exited(Some(3))));
         assert!(!handle.is_running());
         assert!(!handle.script.as_ref().expect("temp script").exists());
+    }
+
+    #[test]
+    fn powershell_parse_error_is_utf8_and_fails() {
+        if Interpreter::PowerShell.program().is_none() {
+            println!("PowerShell not installed; skipping parse error test");
+        } else {
+            let dir = tempfile::tempdir().expect("temp dir");
+            // Parse errors quote the broken line in any UI language.
+            let handle = run_script(Interpreter::PowerShell, "Write-Output 'ok'\n$x = 'äöü' +\n", dir.path())
+                .expect("script starts");
+            let events = collect_until_exit(&handle, Duration::from_secs(60));
+            let stderr: String = events
+                .iter()
+                .filter_map(|e| match e {
+                    RunEvent::Stderr(line) => Some(line.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(stderr.contains("'äöü'"), "{stderr}");
+            assert!(!stderr.contains('\u{FFFD}'), "{stderr}");
+            assert!(matches!(events.last(), Some(RunEvent::Exited(Some(code))) if *code != 0), "{events:?}");
+        }
     }
 
     #[test]
