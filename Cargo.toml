@@ -1,0 +1,45 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[workspace.dependencies]
+kladde-core = { path = "crates/kladde-core" }
+kladde-workspace = { path = "crates/kladde-workspace" }
+kladde-tools = { path = "crates/kladde-tools" }
+kladde-syntax = { path = "crates/kladde-syntax" }
+kladde-editor = { path = "crates/kladde-editor" }
+kladde-hex = { path = "crates/kladde-hex" }
+kladde-wstree = { path = "crates/kladde-wstree" }
+kladde-panels = { path = "crates/kladde-panels" }
+
+memmap2 = "0.9"
+memchr = "2"
+regex = "1"
+encoding_rs = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+globset = "0.4"
+dirs = "5"
+quick-xml = "0.37"
+base64 = "0.22"
+md-5 = "0.10"
+sha1 = "0.10"
+sha2 = "0.10"
+crc32fast = "1"
+similar = "2"
+csv = "1"
+egui = "0.29"
+eframe = { version = "0.29", default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+rfd = "0.15"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
