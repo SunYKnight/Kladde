@@ -1,0 +1,27 @@
+[package]
+name = "kladde"
+description = "Lightweight text and hex editor with workspaces"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "kladde"
+path = "src/main.rs"
+
+[dependencies]
+kladde-core = { workspace = true }
+kladde-workspace = { workspace = true }
+kladde-tools = { workspace = true }
+kladde-syntax = { workspace = true }
+kladde-editor = { workspace = true }
+kladde-hex = { workspace = true }
+kladde-wstree = { workspace = true }
+kladde-panels = { workspace = true }
+egui = { workspace = true }
+eframe = { workspace = true }
+rfd = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
