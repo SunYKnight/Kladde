@@ -1,0 +1,14 @@
+[package]
+name = "kladde-hex"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+egui = { workspace = true }
+kladde-core = { workspace = true }
+
+[dev-dependencies]
+eframe = { workspace = true }
+tempfile = { workspace = true }
