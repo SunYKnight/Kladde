@@ -1,0 +1,18 @@
+[package]
+name = "kladde-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "kladde_core"
+
+[dependencies]
+memmap2 = { workspace = true }
+memchr = { workspace = true }
+regex = { workspace = true }
+encoding_rs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,13 @@
+[package]
+name = "kladde-syntax"
+description = "Lightweight table-driven syntax highlighting and folding for Kladde"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+name = "kladde_syntax"
+path = "src/lib.rs"
+
+[dependencies]

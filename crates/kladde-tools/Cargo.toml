@@ -1,0 +1,20 @@
+[package]
+name = "kladde-tools"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde_json = { workspace = true }
+quick-xml = { workspace = true }
+base64 = { workspace = true }
+md-5 = { workspace = true }
+sha1 = { workspace = true }
+sha2 = { workspace = true }
+crc32fast = { workspace = true }
+similar = { workspace = true }
+csv = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
