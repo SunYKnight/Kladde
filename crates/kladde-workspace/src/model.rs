@@ -373,7 +373,7 @@ impl Workspace {
             NodeKind::File { path: p } if file_color.is_none() && same_path(p, path) => file_color = color,
             NodeKind::Folder { path: p, .. } if strip_base(path, p).is_some() => {
                 let depth = p.components().count();
-                if folder.map_or(true, |(d, _)| depth > d) {
+                if folder.is_none_or(|(d, _)| depth > d) {
                     folder = Some((depth, color));
                 }
             }

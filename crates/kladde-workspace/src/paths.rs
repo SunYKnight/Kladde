@@ -60,7 +60,7 @@ pub(crate) fn to_stored(path: &Path, base: &Path) -> String {
     let roots = p.iter().take_while(|c| matches!(c, Component::Prefix(_) | Component::RootDir)).count();
     let common = p.iter().zip(&b).take_while(|(x, y)| component_eq(**x, **y)).count();
     if path.is_absolute() && roots > 0 && common >= roots {
-        let ups = std::iter::repeat("..".to_string()).take(b.len() - common);
+        let ups = std::iter::repeat_n("..".to_string(), b.len() - common);
         let downs = p[common..].iter().map(|c| c.as_os_str().to_string_lossy().into_owned());
         let parts: Vec<String> = ups.chain(downs).collect();
         if parts.is_empty() {

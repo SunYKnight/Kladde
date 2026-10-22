@@ -59,7 +59,7 @@ impl Filter {
     }
 
     fn accepts(&self, name: &str, is_dir: bool) -> bool {
-        let included = is_dir || self.include.as_ref().map_or(true, |set| set.is_match(name));
+        let included = is_dir || self.include.as_ref().is_none_or(|set| set.is_match(name));
         included && !self.exclude.is_match(name)
     }
 

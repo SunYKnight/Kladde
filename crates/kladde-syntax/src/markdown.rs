@@ -79,7 +79,7 @@ fn block(line: &str, out: &mut Vec<Token>) -> LineState {
     let first = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
     let rest = &line[first..];
     let hashes = rest.bytes().take_while(|&c| c == b'#').count();
-    let heading = first < 4 && (1..=6).contains(&hashes) && rest.as_bytes().get(hashes).map_or(true, |&c| c == b' ');
+    let heading = first < 4 && (1..=6).contains(&hashes) && rest.as_bytes().get(hashes).is_none_or(|&c| c == b' ');
     let rule_byte = rest.bytes().next().unwrap_or(0);
     let rule = first < 4
         && b"-*_=".contains(&rule_byte)
@@ -122,10 +122,10 @@ fn markers(line: &str, first: usize, out: &mut Vec<Token>) -> usize {
         p += b[p..].iter().take_while(|&&c| c == b' ').count();
     }
     let digits = b[p..].iter().take(9).take_while(|c| c.is_ascii_digit()).count();
-    let bullet = b.get(p).is_some_and(|c| b"-*+".contains(c)) && b.get(p + 1).map_or(true, |&c| c == b' ');
+    let bullet = b.get(p).is_some_and(|c| b"-*+".contains(c)) && b.get(p + 1).is_none_or(|&c| c == b' ');
     let ordered = digits > 0
         && b.get(p + digits).is_some_and(|&c| c == b'.' || c == b')')
-        && b.get(p + digits + 1).map_or(true, |&c| c == b' ');
+        && b.get(p + digits + 1).is_none_or(|&c| c == b' ');
     let marker = if bullet {
         1
     } else if ordered {
@@ -163,7 +163,7 @@ impl Finder {
     }
 
     fn next(&mut self, b: &[u8], from: usize) -> Option<usize> {
-        let valid = self.from <= from && self.at.map_or(true, |a| a >= from);
+        let valid = self.from <= from && self.at.is_none_or(|a| a >= from);
         if !valid {
             self.from = from;
             self.at = b.get(from..).and_then(|s| s.iter().position(|&c| c == self.byte)).map(|q| from + q);

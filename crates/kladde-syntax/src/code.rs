@@ -559,8 +559,8 @@ impl Lx<'_> {
     }
 
     fn end_of_line(&self) -> Sub {
-        let single_line = self.sub.mode == STRING
-            && self.spec.strings.get(usize::from(self.sub.aux)).map_or(true, |st| !st.multiline);
+        let single_line =
+            self.sub.mode == STRING && self.spec.strings.get(usize::from(self.sub.aux)).is_none_or(|st| !st.multiline);
         if single_line || self.sub.mode == NORMAL {
             Sub { nest: self.sub.nest, ..Sub::default() }
         } else {
