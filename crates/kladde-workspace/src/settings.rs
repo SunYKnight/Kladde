@@ -10,6 +10,8 @@ use crate::paths::same_path;
 const SETTINGS_FILE: &str = "settings.json";
 const PORTABLE_MARKER: &str = "kladde.portable";
 const MAX_RECENT: usize = 20;
+/// Bytes per hex row offered in Settings and the hex status bar.
+pub const HEX_ROW_CHOICES: [u8; 7] = [4, 8, 16, 24, 32, 48, 64];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThemeChoice {

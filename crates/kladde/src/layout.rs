@@ -260,6 +260,7 @@ impl App {
                 });
             }
             Some(id) => {
+                self.file_header(ui, pane, id);
                 if pane == self.focused_pane {
                     self.show_find_bar_area(ui);
                 }
@@ -273,6 +274,31 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Name of the pane's active document above its content, so every pane shows what it holds even when
+    /// pane 0's tabs are folded away in the workspace strip.
+    fn file_header(&self, ui: &mut Ui, pane: usize, id: DocId) {
+        let path = self.doc_path(id);
+        let title = match self.docs.get(&id) {
+            Some(e) if e.doc.is_dirty() => format!("• {}", e.title),
+            Some(e) => e.title.clone(),
+            None => String::new(),
+        };
+        let focused = pane == self.focused_pane && self.split != SplitMode::None;
+        egui::Frame::none().inner_margin(egui::Margin::symmetric(6.0, 2.0)).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let name = egui::RichText::new(title);
+                let response = ui.label(if focused { name.strong() } else { name });
+                if let Some(dir) = path.as_deref().and_then(Path::parent) {
+                    ui.weak(dir.display().to_string());
+                }
+                if let Some(p) = &path {
+                    response.on_hover_text(p.display().to_string());
+                }
+            });
+        });
+        ui.separator();
     }
 
     /// Tab strip of the second pane.

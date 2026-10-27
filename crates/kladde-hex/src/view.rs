@@ -1,6 +1,5 @@
 //! The hex view widget: layout, painting, pointer and keyboard handling.
 
-use egui::text::{LayoutJob, TextFormat};
 use egui::{
     pos2, vec2, Align2, Color32, Event, EventFilter, FontId, ImeEvent, Key, Modifiers, Pos2, Rect, Response,
     ScrollArea, Sense, Stroke, Ui, UiBuilder,
@@ -508,13 +507,13 @@ fn paint(ui: &Ui, doc: &Document, state: &HexState, f: &Frame, geo: &Geometry, r
         let offset = format!("{row_off:0width$X}", width = offset_digits(len));
         painter.text(pos2(geo.offset_x, y), Align2::LEFT_TOP, offset, f.font.clone(), f.theme.offset);
 
-        let mut job = LayoutJob::default();
+        // Each byte at its own cell: a single text run advances by rounded glyph widths and drifts from the
+        // header, selection and hit-testing at fractional scale factors.
         bytes.iter().enumerate().for_each(|(j, &b)| {
             let color = if b == 0 { f.theme.zero_byte } else { f.theme.byte };
-            job.append(&layout.byte_text(b), 0.0, TextFormat::simple(f.font.clone(), color));
-            job.append(layout.separator(j as u64), 0.0, TextFormat::simple(f.font.clone(), color));
+            let pos = pos2(geo.byte_x(j as u64), y);
+            painter.text(pos, Align2::LEFT_TOP, layout.byte_text(b), f.font.clone(), color);
         });
-        painter.galley(pos2(geo.hex_x, y), painter.layout_job(job), f.theme.byte);
 
         let cells = text_cells(&data, start..start + row_len as usize, f.cfg.text);
         cells.iter().zip(bytes).enumerate().filter(|(_, (&c, _))| c != CONTINUATION).for_each(|(j, (&c, &b))| {

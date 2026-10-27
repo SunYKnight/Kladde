@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.4
+
+### Added
+
+- Hex view: bytes per row can be switched from the status bar (`16/row`): 4, 8, 16, 24, 32, 48 or 64. Settings
+  > Hex offers 4 as well.
+
+### Changed
+
+- Every pane shows the name and folder of its active file above the content, also when the workspace strip is
+  folded.
+
+### Fixed
+
+- Hex view: the byte column header no longer drifts from the data rows at fractional display scaling (e.g. 125 %
+  or 150 % on Windows).
+
 ## 0.1.3
 
 ### Added

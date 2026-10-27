@@ -163,15 +163,6 @@ impl Layout {
         self.cell_x(self.bytes_per_row - 1) + u64::from(self.digits)
     }
 
-    /// Row text for the byte column; the separators match `cell_x`.
-    pub fn separator(&self, j: u64) -> &'static str {
-        if self.group > 1 && (j + 1) % self.group == 0 {
-            "  "
-        } else {
-            " "
-        }
-    }
-
     /// Digits of `b` as shown in the byte column.
     pub fn byte_text(&self, b: u8) -> String {
         match self.digits {
@@ -248,19 +239,5 @@ mod tests {
         assert_eq!(offset_digits(0xFFFF_FFFF), 8);
         assert_eq!(offset_digits(0x1_0000_0000), 9);
         assert_eq!(offset_digits(u64::MAX), 16);
-    }
-
-    #[test]
-    fn grouped_cells_match_separators() {
-        let cfg =
-            HexConfig { bytes_per_row: 8, group: 4, mode: HexMode::Hex, text: TextColumn::Ascii, font_size: 12.0 };
-        let layout = Layout::new(&cfg);
-        let mut row = String::new();
-        (0..8).for_each(|j| {
-            assert_eq!(row.len() as u64, layout.cell_x(j));
-            row.push_str(&layout.byte_text(0xAB));
-            row.push_str(layout.separator(j));
-        });
-        assert_eq!(row.trim_end().len() as u64, layout.hex_chars());
     }
 }

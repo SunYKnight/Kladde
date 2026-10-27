@@ -16,6 +16,7 @@ enum StatusAction {
     HexMode(HexMode),
     HexText(TextColumn),
     ToggleInspector,
+    HexRow(u8),
 }
 
 /// "1.4 MB" style size.
@@ -189,6 +190,18 @@ impl App {
         .response
         .on_hover_text("Text column encoding");
         ui.separator();
+        let row = self.settings.hex_bytes_per_row;
+        ui.menu_button(format!("{row}/row"), |ui| {
+            kladde_workspace::HEX_ROW_CHOICES.into_iter().for_each(|n| {
+                if ui.radio(row == n, format!("{n} bytes per row")).clicked() {
+                    actions.push(StatusAction::HexRow(n));
+                    ui.close_menu();
+                }
+            });
+        })
+        .response
+        .on_hover_text("Bytes per row");
+        ui.separator();
         let ins = if tab.hex.insert_mode() { "INS" } else { "OVR" };
         if ui.button(ins).on_hover_text("Insert key toggles insert/overwrite").clicked() {
             actions.push(StatusAction::ToggleInsert);
@@ -227,6 +240,10 @@ impl App {
             StatusAction::HexMode(m) => self.shell.hex_mode = m,
             StatusAction::HexText(c) => self.shell.hex_text = c,
             StatusAction::ToggleInspector => self.shell.show_inspector = !self.shell.show_inspector,
+            StatusAction::HexRow(n) => {
+                self.settings.hex_bytes_per_row = n;
+                self.store_settings();
+            }
         }
     }
 }

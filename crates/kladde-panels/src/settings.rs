@@ -1,5 +1,5 @@
 use egui::{DragValue, Event, Id, Key, Modifiers};
-use kladde_workspace::{Settings, ThemeChoice};
+use kladde_workspace::{Settings, ThemeChoice, HEX_ROW_CHOICES};
 
 use crate::commands::{commands, Chord, Keymap};
 
@@ -119,7 +119,7 @@ fn hex_section(ui: &mut egui::Ui, s: &mut Settings) -> bool {
         egui::ComboBox::from_id_salt("kladde_settings_hex_row").selected_text(s.hex_bytes_per_row.to_string()).show_ui(
             ui,
             |ui| {
-                [8u8, 16, 24, 32, 48, 64].into_iter().for_each(|n| {
+                HEX_ROW_CHOICES.into_iter().for_each(|n| {
                     changed |= ui.selectable_value(&mut s.hex_bytes_per_row, n, n.to_string()).changed();
                 });
             },
