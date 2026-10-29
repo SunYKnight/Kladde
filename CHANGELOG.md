@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5
+
+### Changed
+
+- Opening a file while Kladde is running (double-click in Explorer, `kladde FILE`) adds it as a tab to the running
+  window and brings that window to the front instead of starting a second window.
+
 ## 0.1.4
 
 ### Added

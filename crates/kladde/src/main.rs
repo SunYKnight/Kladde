@@ -4,6 +4,7 @@ mod app;
 mod commands;
 mod docs;
 mod find;
+mod instance;
 mod layout;
 mod macros;
 mod menus;
@@ -38,9 +39,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = kladde_workspace::data_dir()?;
+    let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
+    match instance::start(&data_dir, &args) {
+        instance::Start::Forwarded => Ok(()),
+        instance::Start::Primary(server) => run_window(data_dir, args, server),
+    }
+}
+
+fn run_window(
+    data_dir: PathBuf,
+    args: Vec<PathBuf>,
+    server: Option<instance::Server>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let settings = Settings::load(&data_dir);
     let size = settings.as_ref().ok().and_then(|s| s.window_size).unwrap_or(DEFAULT_WINDOW);
-    let args: Vec<PathBuf> = std::env::args_os().skip(1).map(PathBuf::from).collect();
     let viewport = egui::ViewportBuilder::default()
         .with_title("Kladde")
         .with_inner_size(size)
@@ -52,7 +64,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     eframe::run_native(
         "Kladde",
         options,
-        Box::new(move |cc| Ok(Box::new(state::App::new(cc, data_dir, settings, args)) as Box<dyn eframe::App>)),
+        Box::new(move |cc| {
+            let forwarded = server.map(|s| s.serve(cc.egui_ctx.clone()));
+            Ok(Box::new(state::App::new(cc, data_dir, settings, args, forwarded)) as Box<dyn eframe::App>)
+        }),
     )?;
     Ok(())
 }

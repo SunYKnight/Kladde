@@ -71,6 +71,8 @@ pub struct ShellState {
     pub(crate) update: crate::update::UpdateState,
     /// Executable to start once the quit after an update has finished.
     pub(crate) relaunch: Option<PathBuf>,
+    /// File lists from later starts of Kladde (Explorer double-click); None when single instance is off.
+    pub(crate) forwarded: Option<std::sync::mpsc::Receiver<Vec<PathBuf>>>,
 }
 
 impl ShellState {
@@ -114,6 +116,7 @@ impl ShellState {
             ws_prompt: None,
             update: crate::update::UpdateState::Idle,
             relaunch: None,
+            forwarded: None,
         }
     }
 }
@@ -124,6 +127,7 @@ impl App {
         data_dir: PathBuf,
         settings: Result<Settings, WsError>,
         args: Vec<PathBuf>,
+        forwarded: Option<std::sync::mpsc::Receiver<Vec<PathBuf>>>,
     ) -> App {
         let (settings, settings_error) = match settings {
             Ok(s) => (s, None),
@@ -151,6 +155,7 @@ impl App {
         };
         settings_error.into_iter().chain(keymap_errors).for_each(|e| app.toast_error(e));
         app.apply_theme(&cc.egui_ctx);
+        app.shell.forwarded = forwarded;
         app.startup(args);
         app.start_updates();
         app
@@ -204,6 +209,19 @@ impl App {
                 Some(crate::wsbar::WsPrompt::Drop(pending)) => pending.extend(dropped),
                 _ => self.shell.ws_prompt = Some(crate::wsbar::WsPrompt::Drop(dropped)),
             }
+        }
+    }
+
+    /// Opens files sent by a later start and raises the window, as if they had been opened here.
+    fn handle_forwarded(&mut self, ctx: &egui::Context) {
+        let batches: Vec<Vec<PathBuf>> =
+            self.shell.forwarded.as_ref().map_or_else(Vec::new, |rx| rx.try_iter().collect());
+        if !batches.is_empty() {
+            batches.iter().flatten().for_each(|p| {
+                self.open_path(p, crate::docs::auto_open(), None);
+            });
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
     }
 
@@ -270,6 +288,7 @@ impl eframe::App for App {
         self.poll_backups();
         self.poll_update();
         self.handle_dropped(ctx);
+        self.handle_forwarded(ctx);
         if let Some(tab) = self.feat.show_bottom.take() {
             self.shell.bottom_visible = true;
             self.shell.bottom_tab = tab;

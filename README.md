@@ -35,6 +35,10 @@ Linux needs the usual X11/Wayland development packages for eframe (`libxkbcommon
 kladde [FILE...]
 ```
 
+One window per data folder: starting Kladde again (e.g. double-clicking a file in Explorer) opens the files as tabs
+in the running window and brings it to the front. The running instance listens on a loopback port recorded in
+`instance` in the data folder; portable copies have their own data folder and run separately.
+
 - Workspaces: the strip below the menu bar shows every workspace as a tab group. A folded workspace shows only its
   name; an unfolded one shows its file tabs after it. Click a folded workspace to switch to it, click the active one
   to fold or unfold it, right-click to rename or delete, `+` creates one. All workspaces, their trees and tab lists
