@@ -545,9 +545,7 @@ impl App {
         let dir = self.focused_doc().and_then(|id| self.doc_path(id)).and_then(|p| p.parent().map(Path::to_path_buf));
         let dialog = dir.map_or_else(rfd::FileDialog::new, |d| rfd::FileDialog::new().set_directory(d));
         let files = dialog.set_title("Open").pick_files().unwrap_or_default();
-        files.iter().for_each(|p| {
-            self.open_path(p, opts.clone(), view);
-        });
+        self.open_external(&files, opts, view);
     }
 
     fn add_current_file_to_workspace(&mut self) {

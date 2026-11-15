@@ -217,9 +217,7 @@ impl App {
         let batches: Vec<Vec<PathBuf>> =
             self.shell.forwarded.as_ref().map_or_else(Vec::new, |rx| rx.try_iter().collect());
         if !batches.is_empty() {
-            batches.iter().flatten().for_each(|p| {
-                self.open_path(p, crate::docs::auto_open(), None);
-            });
+            self.open_external(&batches.concat(), crate::docs::auto_open(), None);
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }

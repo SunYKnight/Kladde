@@ -7,11 +7,14 @@ use std::time::Instant;
 
 use kladde_core::{CoreError, Document, OpenMode, OpenOptions, Progress};
 use kladde_tools::GitStatus;
-use kladde_workspace::{store_file, Node, NodeKind, Session, SplitMode, TabState, WorkspaceStore};
+use kladde_workspace::{
+    store_file, Node, NodeKind, Session, SplitMode, TabState, ViewKind, WorkspaceStore, DEFAULT_WORKSPACE,
+};
 
 use crate::app::Bg;
-use crate::docs::{apply_position, tab_position};
-use crate::state::{App, DocId};
+use crate::docs::{apply_position, same_path, tab_position};
+use crate::state::{App, DocId, TabView};
+use crate::wsbar::TabDrag;
 
 const BACKUP_DIR: &str = "backups";
 
@@ -77,9 +80,17 @@ fn git_statuses(dirs: &[PathBuf]) -> Result<HashMap<PathBuf, GitStatus>, String>
 }
 
 impl App {
-    /// Startup: load all workspaces, restore the active one's tabs, then open command-line files.
+    /// Startup: load all workspaces and restore the active one's tabs; command-line files make the Default
+    /// workspace active first and open there.
     pub(crate) fn startup(&mut self, args: Vec<PathBuf>) {
         self.load_store();
+        if !args.is_empty() {
+            self.ws.active = self.default_workspace();
+            let ws = self.ws.current_mut();
+            ws.set_folded(false);
+            // The file records which workspace is active, so it must be written.
+            ws.mark_dirty();
+        }
         let session = self.ws.current().session.clone();
         self.restore_session(session);
         args.iter().for_each(|p| {
@@ -87,6 +98,27 @@ impl App {
         });
         self.ensure_tab();
         self.refresh_git();
+    }
+
+    /// Index of the workspace named Default; it is created again when it was renamed or deleted.
+    fn default_workspace(&mut self) -> usize {
+        let found = self.ws.workspaces.iter().position(|w| w.name.eq_ignore_ascii_case(DEFAULT_WORKSPACE));
+        found.unwrap_or_else(|| self.ws.add(DEFAULT_WORKSPACE))
+    }
+
+    /// Opens files that come from outside any workspace (second start, Open dialog, recent files, window drop)
+    /// in the Default workspace. A blocked switch opens them in the active workspace; its hint says why.
+    pub(crate) fn open_external(&mut self, paths: &[PathBuf], opts: OpenOptions, view: Option<ViewKind>) {
+        if !paths.is_empty() {
+            let target = self.default_workspace();
+            if target != self.ws.active {
+                self.enter_workspace(target);
+            }
+            paths.iter().for_each(|p| {
+                self.open_path(p, opts.clone(), view);
+            });
+            self.ensure_tab();
+        }
     }
 
     pub(crate) fn ensure_tab(&mut self) {
@@ -215,6 +247,23 @@ impl App {
         result
     }
 
+    /// State of tab `t` in `pane`; the backup is taken as it is.
+    fn tab_state(&self, pane: usize, t: &TabView) -> Option<TabState> {
+        let e = self.docs.get(&t.doc)?;
+        let (caret, scroll) = tab_position(t);
+        Some(TabState {
+            path: self.doc_path(t.doc),
+            backup: e.backup.clone().filter(|_| e.doc.is_dirty()),
+            title: e.title.clone(),
+            pane: pane as u8,
+            view: t.view,
+            caret,
+            scroll,
+            read_only: e.open_opts.read_only,
+            tail: e.tail,
+        })
+    }
+
     /// Current tabs as a session; backups are taken as they are.
     fn session_snapshot(&self) -> Session {
         let tabs = self
@@ -222,21 +271,7 @@ impl App {
             .iter()
             .enumerate()
             .flat_map(|(p, pane)| pane.tabs.iter().map(move |t| (p, t)))
-            .filter_map(|(p, t)| {
-                let e = self.docs.get(&t.doc)?;
-                let (caret, scroll) = tab_position(t);
-                Some(TabState {
-                    path: self.doc_path(t.doc),
-                    backup: e.backup.clone().filter(|_| e.doc.is_dirty()),
-                    title: e.title.clone(),
-                    pane: p as u8,
-                    view: t.view,
-                    caret,
-                    scroll,
-                    read_only: e.open_opts.read_only,
-                    tail: e.tail,
-                })
-            })
+            .filter_map(|(p, t)| self.tab_state(p, t))
             .collect();
         let active = [0, 1].map(|p| (!self.panes[p].tabs.is_empty()).then_some(self.panes[p].active));
         Session { tabs, active, split: self.split, split_ratio: self.split_ratio }
@@ -280,8 +315,9 @@ impl App {
         self.focused_pane = 0;
     }
 
-    /// Stores the current tabs into the active workspace and loads those of workspace `target`.
-    fn switch_to(&mut self, target: usize) -> bool {
+    /// Stores the current tabs into the active workspace and loads those of workspace `target`, leaving an
+    /// empty window when it has none.
+    fn enter_workspace(&mut self, target: usize) -> bool {
         let large = self.large_dirty_docs();
         let blocked = if self.saves_running() || self.shell.backup_jobs > 0 {
             Some("Wait until saves and backups have finished".to_string())
@@ -305,7 +341,6 @@ impl App {
                 ws.mark_dirty();
                 let session = ws.session.clone();
                 self.restore_session(session);
-                self.ensure_tab();
                 self.shell.git.clear();
                 self.refresh_git();
                 if let Err(e) = self.save_store() {
@@ -318,6 +353,13 @@ impl App {
                 false
             }
         }
+    }
+
+    /// `enter_workspace` with an untitled tab in an otherwise empty window.
+    fn switch_to(&mut self, target: usize) -> bool {
+        let switched = self.enter_workspace(target);
+        self.ensure_tab();
+        switched
     }
 
     /// Puts the current tabs into the active workspace and writes the workspace file.
@@ -402,6 +444,94 @@ impl App {
                 self.focus_tab(pane, before.min(self.panes[pane].tabs.len().saturating_sub(1)));
             }
         }
+    }
+
+    /// Moves a tab dragged in the workspace strip to workspace `to`, unsaved content included.
+    pub(crate) fn move_tab_to_workspace(&mut self, from: TabDrag, to: usize) {
+        let moved = match from {
+            _ if to >= self.ws.workspaces.len() => Err("The target workspace no longer exists".to_string()),
+            TabDrag::Live { pane, tab } => self.move_live_tab(pane, tab, to),
+            TabDrag::Stored { ws, tab } if to == self.ws.active => self.move_stored_tab_live(ws, tab),
+            TabDrag::Stored { ws, tab } => self.move_stored_tab(ws, tab, to),
+        };
+        let session = self.session_snapshot();
+        self.set_current_session(session);
+        match moved.and_then(|title| self.save_store().map(|()| title)) {
+            Ok(title) => self.toast_info(format!("Moved {title} to workspace {}", self.ws.workspaces[to].name)),
+            Err(e) => self.toast_error(e),
+        }
+    }
+
+    /// Hands the document of a live tab to inactive workspace `to`; its backup goes along and every view of it
+    /// here closes.
+    fn move_live_tab(&mut self, pane: usize, tab: usize, to: usize) -> Result<String, String> {
+        let id = self.panes.get(pane).and_then(|p| p.tabs.get(tab)).map(|t| t.doc).ok_or_else(tab_gone)?;
+        let entry = self.docs.get(&id).ok_or_else(tab_gone)?;
+        let title = entry.title.clone();
+        // A running backup job would delete its file once the document is gone here.
+        let busy = entry.load.is_some() || entry.save.is_some() || self.shell.backup_jobs > 0;
+        require(!busy, format!("Wait until {title} has finished loading, saving and backing up"))?;
+        let large = self.large_dirty_docs().contains(&id);
+        require(!large, format!("Save {title} first; it is too large for a backup"))?;
+        self.sync_backup(id)?;
+        let state = self.tab_state(pane, &self.panes[pane].tabs[tab]).ok_or_else(tab_gone)?;
+        let target = &mut self.ws.workspaces[to];
+        let there = state.path.as_deref().is_some_and(|p| stored_has_path(&target.session, p));
+        let clash = format!("{title} is open in workspace {} already; save it first", target.name);
+        require(!(there && state.backup.is_some()), clash)?;
+        if !there {
+            target.session.push_tab(state);
+            target.mark_dirty();
+            if let Some(e) = self.docs.get_mut(&id) {
+                e.backup = None;
+                e.backup_revision = None;
+            }
+        }
+        self.remove_doc(id);
+        self.ensure_tab();
+        Ok(title)
+    }
+
+    /// Moves stored tab `tab` of inactive workspace `from` to inactive workspace `to`.
+    fn move_stored_tab(&mut self, from: usize, tab: usize, to: usize) -> Result<String, String> {
+        let state = self.stored_tab(from, tab)?;
+        let target = &self.ws.workspaces[to];
+        let there = state.path.as_deref().is_some_and(|p| stored_has_path(&target.session, p));
+        let clash = format!("{} is open in workspace {} already; save it first", state.title, target.name);
+        require(!(there && state.backup.is_some()), clash)?;
+        let source = &mut self.ws.workspaces[from];
+        let removed = source.session.remove_tab(tab);
+        source.mark_dirty();
+        if let Some(moved) = removed.filter(|_| !there) {
+            let target = &mut self.ws.workspaces[to];
+            target.session.push_tab(moved);
+            target.mark_dirty();
+        }
+        Ok(state.title)
+    }
+
+    /// Moves stored tab `tab` of inactive workspace `from` into the open tabs of the active workspace.
+    fn move_stored_tab_live(&mut self, from: usize, tab: usize) -> Result<String, String> {
+        let state = self.stored_tab(from, tab)?;
+        let open = state
+            .path
+            .as_deref()
+            .is_some_and(|p| self.docs.keys().any(|id| self.doc_path(*id).is_some_and(|d| same_path(&d, p))));
+        let clash = format!(
+            "{} is open here already; save it in workspace {} first",
+            state.title, self.ws.workspaces[from].name
+        );
+        require(!(open && state.backup.is_some()), clash)?;
+        let source = &mut self.ws.workspaces[from];
+        source.session.remove_tab(tab);
+        source.mark_dirty();
+        let title = state.title.clone();
+        self.restore_tab(TabState { pane: 0, ..state });
+        Ok(title)
+    }
+
+    fn stored_tab(&self, ws: usize, tab: usize) -> Result<TabState, String> {
+        self.ws.workspaces.get(ws).and_then(|w| w.session.tabs.get(tab)).cloned().ok_or_else(tab_gone)
     }
 
     /// Hot exit: back up modified documents, persist session, settings and workspaces, then close the window.
@@ -554,6 +684,18 @@ impl App {
 /// N of an untitled title "new N"; 0 otherwise.
 fn untitled_number(title: &str) -> u32 {
     title.strip_prefix("new ").and_then(|n| n.parse().ok()).unwrap_or(0)
+}
+
+fn tab_gone() -> String {
+    "The dragged tab no longer exists".to_string()
+}
+
+fn require(ok: bool, why: String) -> Result<(), String> {
+    ok.then_some(()).ok_or(why)
+}
+
+fn stored_has_path(session: &Session, path: &Path) -> bool {
+    session.tabs.iter().any(|t| t.path.as_deref().is_some_and(|p| same_path(p, path)))
 }
 
 #[cfg(test)]

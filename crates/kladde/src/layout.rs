@@ -331,7 +331,8 @@ impl App {
             if selected && focused {
                 rich = rich.strong();
             }
-            let response = ui.selectable_label(selected, rich);
+            let response = ui.selectable_label(selected, rich).interact(Sense::click_and_drag());
+            response.dnd_set_drag_payload(crate::wsbar::TabDrag::Live { pane, tab: i });
             if let Some(color) = accent {
                 let r = response.rect;
                 let bar = Rect::from_min_max(egui::pos2(r.min.x, r.max.y - 2.0), r.max);

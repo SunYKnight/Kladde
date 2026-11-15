@@ -23,7 +23,7 @@ Priority: **M** = first release, **2** = second iteration, **L** = later. All it
 | W5 | Rename: display alias (workspace only) and separate "rename on disk" | M |
 | W6 | Drag & drop reorder and move between groups | M |
 | W7 | Per-workspace session: open tabs, cursors, layout | M |
-| W8 | Several workspaces; the strip below the menu bar shows each as a tab group (folded: name only; unfolded: name followed by its file tabs); quick switcher; create, rename, delete | M |
+| W8 | Several workspaces; the strip below the menu bar shows each as a tab group (folded: name only; unfolded: name followed by its file tabs); tabs drag between groups to move to that workspace; files opened from outside a workspace open in workspace Default; quick switcher; create, rename, delete | M |
 | W9 | Mark missing files, offer relocate | 2 |
 | W10 | Fuzzy file open within workspace (Ctrl+P) | M |
 

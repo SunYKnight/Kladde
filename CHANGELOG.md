@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.6
+
+### Added
+
+- Workspace strip: drag a tab onto another workspace to move it there, unsaved changes included.
+
+### Changed
+
+- Files opened from outside a workspace (Explorer, `kladde FILE`, File > Open, recent files, "Open" for files
+  dropped on the window) open in the workspace Default, which is created again if it was renamed or deleted.
+
 ## 0.1.5
 
 ### Changed

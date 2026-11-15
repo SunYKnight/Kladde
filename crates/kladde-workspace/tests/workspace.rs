@@ -275,3 +275,26 @@ fn recent_lists_are_unique_newest_first_and_capped() {
     assert_eq!(s.recent_files[1], Path::new("/f24"));
     assert_eq!(s.recent_files.iter().filter(|p| *p == Path::new("/f10")).count(), 1);
 }
+
+#[test]
+fn moving_stored_tabs_keeps_the_active_tab_of_each_pane() {
+    let tab = |title: &str, pane: u8| TabState { title: title.into(), pane, ..TabState::default() };
+    let mut s = Session {
+        tabs: vec![tab("a", 0), tab("x", 1), tab("b", 0), tab("c", 0)],
+        active: [Some(2), Some(0)],
+        ..Session::default()
+    };
+    assert_eq!(s.remove_tab(0).map(|t| t.title), Some("a".into()));
+    assert_eq!(s.active, [Some(1), Some(0)]);
+    assert_eq!(s.remove_tab(2).map(|t| t.title), Some("c".into()));
+    assert_eq!(s.active, [Some(0), Some(0)]);
+    assert_eq!(s.remove_tab(0).map(|t| t.title), Some("x".into()));
+    assert_eq!(s.active, [Some(0), None]);
+    assert!(s.remove_tab(5).is_none());
+
+    let mut target = Session::default();
+    target.push_tab(tab("y", 1));
+    target.push_tab(tab("z", 0));
+    assert_eq!(target.tabs.iter().map(|t| t.pane).collect::<Vec<_>>(), [0, 0]);
+    assert_eq!(target.active, [Some(0), None]);
+}

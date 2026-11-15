@@ -1,5 +1,6 @@
 //! Workspace strip below the menu bar: every workspace as a tab group, folded to `▸ Name` or unfolded to
-//! `▾ Name` followed by its file tabs (W8), plus the name, delete and file drop dialogs.
+//! `▾ Name` followed by its file tabs (W8); a tab dragged onto another group moves there. Also the name,
+//! delete and file drop dialogs.
 
 use std::path::PathBuf;
 
@@ -31,6 +32,22 @@ impl WsPrompt {
     }
 }
 
+/// Drag payload of a tab: a live tab of the active workspace or a stored tab of another one.
+#[derive(Clone, Copy, Debug)]
+pub enum TabDrag {
+    Live { pane: usize, tab: usize },
+    Stored { ws: usize, tab: usize },
+}
+
+impl TabDrag {
+    fn workspace(self, active: usize) -> usize {
+        match self {
+            TabDrag::Live { .. } => active,
+            TabDrag::Stored { ws, .. } => ws,
+        }
+    }
+}
+
 enum StripAction {
     /// Header click: switch to an inactive workspace, fold or unfold the active one.
     Header(usize),
@@ -41,6 +58,10 @@ enum StripAction {
     },
     Tab(TabAction),
     Prompt(WsPrompt),
+    MoveTab {
+        from: TabDrag,
+        to: usize,
+    },
 }
 
 /// Right-pointing (folded) or down-pointing (unfolded) triangle; egui's default fonts lack these glyphs.
@@ -67,13 +88,49 @@ impl App {
                     }
                 });
             });
+            self.drag_preview(ui);
         });
         actions.into_iter().for_each(|a| self.strip_action(a));
     }
 
+    /// Title of the dragged tab at the pointer.
+    fn drag_preview(&self, ui: &Ui) {
+        let title = egui::DragAndDrop::payload::<TabDrag>(ui.ctx()).map(|d| match *d {
+            TabDrag::Live { pane, tab } => {
+                let doc = self.panes.get(pane).and_then(|p| p.tabs.get(tab)).and_then(|t| self.docs.get(&t.doc));
+                doc.map_or_else(String::new, |e| e.title.clone())
+            }
+            TabDrag::Stored { ws, tab } => {
+                let stored = self.ws.workspaces.get(ws).and_then(|w| w.session.tabs.get(tab));
+                stored.map_or_else(String::new, |t| t.title.clone())
+            }
+        });
+        if let Some(title) = title {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            egui::show_tooltip_at_pointer(ui.ctx(), ui.layer_id(), ui.id().with("kladde_tab_drag"), |ui| {
+                ui.label(title);
+                ui.weak("Drop on another workspace to move it there");
+            });
+        }
+    }
+
+    /// Outlines group `i` while a tab of another workspace hovers it and turns a release into a move.
+    fn drop_zone(&self, ui: &Ui, i: usize, zone: Rect, actions: &mut Vec<StripAction>) {
+        let dragged = egui::DragAndDrop::payload::<TabDrag>(ui.ctx())
+            .filter(|d| d.workspace(self.ws.active) != i && ui.rect_contains_pointer(zone));
+        if let Some(from) = dragged {
+            ui.painter().rect_stroke(zone.expand(2.0), 3.0, ui.visuals().selection.stroke);
+            if ui.input(|inp| inp.pointer.any_released()) {
+                egui::DragAndDrop::clear_payload(ui.ctx());
+                actions.push(StripAction::MoveTab { from: *from, to: i });
+            }
+        }
+    }
+
     /// Header of workspace `i` and, when unfolded, its tabs: live ones for the active workspace (first pane),
-    /// stored ones for the others.
+    /// stored ones for the others. The whole group is a drop target for tabs of other workspaces.
     fn workspace_group(&self, ui: &mut Ui, i: usize, actions: &mut Vec<StripAction>) {
+        let left = ui.cursor().min.x;
         let ws = &self.ws.workspaces[i];
         let active = i == self.ws.active;
         let height = ui.spacing().interact_size.y;
@@ -121,6 +178,8 @@ impl App {
                 true => actions.extend(self.tab_chips(ui, 0).into_iter().map(StripAction::Tab)),
                 false => ws.session.tabs.iter().enumerate().for_each(|(tab, t)| {
                     let response = ui.selectable_label(false, RichText::new(&t.title).weak());
+                    let response = response.interact(Sense::click_and_drag());
+                    response.dnd_set_drag_payload(TabDrag::Stored { ws: i, tab });
                     let response = match &t.path {
                         Some(p) => response.on_hover_text(p.display().to_string()),
                         None => response,
@@ -131,6 +190,8 @@ impl App {
                 }),
             }
         }
+        let zone = Rect::from_x_y_ranges(left..=ui.cursor().min.x, response.rect.y_range());
+        self.drop_zone(ui, i, zone, actions);
         ui.separator();
     }
 
@@ -141,6 +202,7 @@ impl App {
                 ws.set_folded(!ws.folded);
             }
             StripAction::Header(i) => self.switch_workspace(i),
+            StripAction::MoveTab { from, to } => self.move_tab_to_workspace(from, to),
             StripAction::StoredTab { ws, tab } => self.switch_workspace_to_tab(ws, tab),
             StripAction::Tab(a) => self.tab_action(0, a),
             StripAction::Prompt(p) => self.shell.ws_prompt = Some(p),
@@ -217,15 +279,19 @@ impl App {
                     .resizable(false)
                     .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
                     .show(ctx, |ui| {
-                        ui.label(format!("{what}: open, or add to workspace {ws}?"));
+                        ui.label(format!("{what}: open in workspace Default, or add to workspace {ws}?"));
                         if files < paths.len() {
                             ui.weak("Folders are added as linked folders; only files open as tabs.");
                         }
                         ui.horizontal(|ui| {
-                            let choices =
-                                [("Open", true, false), ("Add to workspace", false, true), ("Both", true, true)];
-                            choices.into_iter().for_each(|(label, open, add)| {
-                                if ui.add_enabled(add || files > 0, egui::Button::new(label)).clicked() {
+                            let choices = [
+                                ("Open", true, false, "Opens in workspace Default".to_string()),
+                                ("Add to workspace", false, true, format!("Adds to workspace {ws}")),
+                                ("Both", true, true, format!("Adds to workspace {ws} and opens there")),
+                            ];
+                            choices.into_iter().for_each(|(label, open, add, hint)| {
+                                let button = ui.add_enabled(add || files > 0, egui::Button::new(label));
+                                if button.on_hover_text(hint).clicked() {
                                     drop_choice = (open, add);
                                     done = Some(true);
                                 }
@@ -249,16 +315,22 @@ impl App {
         }
     }
 
-    /// Opens the dropped files and/or adds files and folders to the active workspace.
+    /// Opens the dropped files and/or adds files and folders to the active workspace. Opened alone they go to the
+    /// Default workspace; together with adding, they open next to their new entries.
     fn dropped_choice(&mut self, paths: &[PathBuf], (open, add): (bool, bool)) {
-        if add {
-            let root = self.ws.current().root.id;
-            self.add_to_workspace(root, paths);
-        }
-        if open {
-            paths.iter().filter(|p| !p.is_dir()).for_each(|p| {
-                self.open_path(p, crate::docs::auto_open(), None);
-            });
+        let files: Vec<PathBuf> = paths.iter().filter(|p| !p.is_dir()).cloned().collect();
+        match (open, add) {
+            (true, false) => self.open_external(&files, crate::docs::auto_open(), None),
+            (_, true) => {
+                let root = self.ws.current().root.id;
+                self.add_to_workspace(root, paths);
+                if open {
+                    files.iter().for_each(|p| {
+                        self.open_path(p, crate::docs::auto_open(), None);
+                    });
+                }
+            }
+            (false, false) => {}
         }
     }
 }

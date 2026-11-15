@@ -41,3 +41,30 @@ pub struct Session {
     pub split: SplitMode,
     pub split_ratio: f32,
 }
+
+impl Session {
+    /// Removes tab `i`; the active tab of its pane stays the same tab where it still exists.
+    pub fn remove_tab(&mut self, i: usize) -> Option<TabState> {
+        (i < self.tabs.len()).then(|| {
+            let tab = self.tabs.remove(i);
+            let pane = tab.pane.min(1);
+            let in_pane = |t: &&TabState| t.pane.min(1) == pane;
+            let before = self.tabs.iter().take(i).filter(in_pane).count();
+            let left = self.tabs.iter().filter(in_pane).count();
+            let slot = &mut self.active[usize::from(pane)];
+            *slot = match *slot {
+                _ if left == 0 => None,
+                Some(a) if a > before => Some(a - 1),
+                other => other.map(|a| a.min(left - 1)),
+            };
+            tab
+        })
+    }
+
+    /// Appends `tab` to the first pane; it becomes active only in an empty pane.
+    pub fn push_tab(&mut self, tab: TabState) {
+        let index = self.tabs.iter().filter(|t| t.pane == 0).count();
+        self.tabs.push(TabState { pane: 0, ..tab });
+        self.active[0] = self.active[0].or(Some(index));
+    }
+}

@@ -137,9 +137,7 @@ impl App {
         let ctx = ui.ctx().clone();
         match chosen {
             Some(MenuAction::Command(id)) => self.execute(&ctx, id),
-            Some(MenuAction::OpenFile(path)) => {
-                self.open_path(&path, crate::docs::auto_open(), None);
-            }
+            Some(MenuAction::OpenFile(path)) => self.open_external(&[path], crate::docs::auto_open(), None),
             Some(MenuAction::Reopen(id, enc)) => self.reopen_with(id, enc),
             None => {}
         }

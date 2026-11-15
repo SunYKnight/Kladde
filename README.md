@@ -37,12 +37,15 @@ kladde [FILE...]
 
 One window per data folder: starting Kladde again (e.g. double-clicking a file in Explorer) opens the files as tabs
 in the running window and brings it to the front. The running instance listens on a loopback port recorded in
-`instance` in the data folder; portable copies have their own data folder and run separately.
+`instance` in the data folder; portable copies have their own data folder and run separately. Files opened from
+outside a workspace (Explorer, command line, File > Open, recent files, "Open" for dropped files) open in the
+workspace Default.
 
 - Workspaces: the strip below the menu bar shows every workspace as a tab group. A folded workspace shows only its
   name; an unfolded one shows its file tabs after it. Click a folded workspace to switch to it, click the active one
-  to fold or unfold it, right-click to rename or delete, `+` creates one. All workspaces, their trees and tab lists
-  are saved automatically to `workspaces.json` in the data folder.
+  to fold or unfold it, right-click to rename or delete, `+` creates one. Drag a tab onto another workspace to move
+  it there, unsaved changes included. All workspaces, their trees and tab lists are saved automatically to
+  `workspaces.json` in the data folder.
 - Portable mode: create an empty file `kladde.portable` next to the executable; settings, workspaces, backups and
   file history then live in `kladde-data/` beside it, and workspace paths are stored relative to that folder so a
   changed drive letter does not break them. Otherwise they live in `%APPDATA%\Kladde` (Windows) or
